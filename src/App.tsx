@@ -1,0 +1,294 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useEffect, useState, useCallback } from 'react';
+import { AppTab, DownloadTask, Language, MediaFormat, VideoMetadata } from './types';
+import { Navbar } from './components/Navbar';
+import { DownloaderView } from './components/DownloaderView';
+import { DownloadHistoryView } from './components/DownloadHistoryView';
+import { CodeBlueprintModal } from './components/CodeBlueprintModal';
+import { PWAShareTargetTutorial } from './components/PWAShareTargetTutorial';
+import { BatchDownloaderView } from './components/BatchDownloaderView';
+import { ActiveDownloadBar } from './components/ActiveDownloadBar';
+import { 
+  extractUrlFromText, 
+  extractVideoInfo, 
+  SAMPLE_VIDEOS, 
+  SampleVideoItem 
+} from './services/videoExtractor';
+import { 
+  loadDownloadHistory, 
+  saveDownloadHistory, 
+  startDownloadSimulation 
+} from './services/downloadManager';
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<AppTab>('downloader');
+  const [language, setLanguage] = useState<Language>('bn');
+  const [inputUrl, setInputUrl] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [video, setVideo] = useState<VideoMetadata | null>(null);
+  const [activeFormatId, setActiveFormatId] = useState<string | null>(null);
+  const [detectedSharedUrl, setDetectedSharedUrl] = useState<string | null>(null);
+  
+  // Download states
+  const [activeTask, setActiveTask] = useState<DownloadTask | null>(null);
+  const [cancelFn, setCancelFn] = useState<(() => void) | null>(null);
+  const [history, setHistory] = useState<DownloadTask[]>([]);
+
+  // 1. Initialize history from localStorage
+  useEffect(() => {
+    const saved = loadDownloadHistory();
+    setHistory(saved);
+  }, []);
+
+  // 2. Check for Web Share Target query params (?url=... or ?text=...)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const sharedUrl = params.get('url') || params.get('text');
+      if (sharedUrl) {
+        const cleanUrl = extractUrlFromText(sharedUrl);
+        if (cleanUrl) {
+          setDetectedSharedUrl(cleanUrl);
+          setInputUrl(cleanUrl);
+          // Automatically extract if a share URL arrived
+          executeAnalyze(cleanUrl);
+        }
+      }
+    } catch {
+      // Ignore URL parsing errors
+    }
+  }, []);
+
+  // Analyze video function
+  const executeAnalyze = useCallback(async (urlToAnalyze?: string) => {
+    const targetUrl = urlToAnalyze || inputUrl;
+    const cleanUrl = extractUrlFromText(targetUrl);
+
+    if (!cleanUrl) {
+      setError(language === 'bn' ? 'অনুগ্রহ করে একটি সঠিক ভিডিও লিঙ্ক প্রদান করুন' : 'Please provide a valid video URL');
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const metadata = await extractVideoInfo(cleanUrl);
+      setVideo(metadata);
+      setActiveTab('downloader');
+    } catch (err: any) {
+      setError(err?.message || (language === 'bn' ? 'ভিডিও তথ্য বের করতে সমস্যা হয়েছে' : 'Failed to retrieve video information'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [inputUrl, language]);
+
+  // Handle Download trigger
+  const handleDownload = useCallback((format: MediaFormat) => {
+    if (!video) return;
+
+    setActiveFormatId(format.id);
+
+    const { cancel } = startDownloadSimulation(
+      video,
+      format,
+      // onProgress
+      (task) => {
+        setActiveTask(task);
+      },
+      // onComplete
+      (completedTask) => {
+        setActiveTask(completedTask);
+        setActiveFormatId(null);
+        setCancelFn(null);
+
+        // Add to history
+        setHistory((prev) => {
+          const updated = [completedTask, ...prev.filter(i => i.id !== completedTask.id)];
+          saveDownloadHistory(updated);
+          return updated;
+        });
+      },
+      // onError
+      (taskId, errorMsg) => {
+        setActiveFormatId(null);
+        setCancelFn(null);
+        setActiveTask((prev) => prev ? { ...prev, status: 'failed', error: errorMsg } : null);
+      }
+    );
+
+    setCancelFn(() => cancel);
+  }, [video]);
+
+  // Handle cancel download
+  const handleCancelDownload = useCallback((taskId: string) => {
+    if (cancelFn) {
+      cancelFn();
+    }
+    setActiveTask(null);
+    setActiveFormatId(null);
+  }, [cancelFn]);
+
+  // Delete history item
+  const handleDeleteHistoryItem = useCallback((id: string) => {
+    setHistory((prev) => {
+      const updated = prev.filter(item => item.id !== id);
+      saveDownloadHistory(updated);
+      return updated;
+    });
+  }, []);
+
+  // Clear all history
+  const handleClearHistory = useCallback(() => {
+    setHistory([]);
+    saveDownloadHistory([]);
+  }, []);
+
+  // Handle sample selection
+  const handleSelectSample = useCallback((sample: SampleVideoItem) => {
+    setInputUrl(sample.url);
+    executeAnalyze(sample.url);
+  }, [executeAnalyze]);
+
+  // Handle test from PWA Share Target Tutorial
+  const handleTestInDownloader = useCallback((testUrl: string) => {
+    setInputUrl(testUrl);
+    setActiveTab('downloader');
+    executeAnalyze(testUrl);
+  }, [executeAnalyze]);
+
+  // Handle batch task completion (auto save to download history)
+  const handleBatchTaskCompleted = useCallback((task: DownloadTask) => {
+    setHistory(prev => {
+      const updated = [task, ...prev.filter(item => item.id !== task.id)];
+      saveDownloadHistory(updated);
+      return updated;
+    });
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white">
+      {/* Navigation Bar */}
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        language={language}
+        setLanguage={setLanguage}
+        historyCount={history.length}
+      />
+
+      {/* Main Content Area */}
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-4 pb-28">
+        {activeTab === 'downloader' && (
+          <DownloaderView
+            inputUrl={inputUrl}
+            setInputUrl={setInputUrl}
+            isLoading={isLoading}
+            error={error}
+            video={video}
+            activeFormatId={activeFormatId}
+            activeTask={activeTask}
+            detectedSharedUrl={detectedSharedUrl}
+            onAnalyze={executeAnalyze}
+            onDownload={handleDownload}
+            onSelectSample={handleSelectSample}
+            onOpenPWAGuide={() => setActiveTab('pwa-guide')}
+            onSwitchToBatch={() => setActiveTab('batch')}
+            language={language}
+          />
+        )}
+
+        {activeTab === 'batch' && (
+          <BatchDownloaderView
+            language={language}
+            onTaskCompleted={handleBatchTaskCompleted}
+            onSwitchToSingle={(url) => {
+              if (url) {
+                setInputUrl(url);
+                executeAnalyze(url);
+              }
+              setActiveTab('downloader');
+            }}
+          />
+        )}
+
+        {activeTab === 'history' && (
+          <DownloadHistoryView
+            history={history}
+            onClearHistory={handleClearHistory}
+            onDeleteItem={handleDeleteHistoryItem}
+            onBackToDownloader={() => setActiveTab('downloader')}
+            language={language}
+          />
+        )}
+
+        {activeTab === 'pwa-guide' && (
+          <PWAShareTargetTutorial
+            language={language}
+            onTestInDownloader={handleTestInDownloader}
+            onBackToDownloader={() => setActiveTab('downloader')}
+          />
+        )}
+
+        {activeTab === 'blueprint' && (
+          <CodeBlueprintModal
+            language={language}
+            onOpenPWAGuide={() => setActiveTab('pwa-guide')}
+          />
+        )}
+      </main>
+
+      {/* Active in-progress Download bar */}
+      <ActiveDownloadBar
+        task={activeTask}
+        onCancel={handleCancelDownload}
+        language={language}
+      />
+
+      {/* Footer */}
+      <footer className="w-full border-t border-slate-900 bg-slate-950 py-6 text-center text-xs text-slate-500">
+        <div className="max-w-4xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <p>
+            {language === 'bn' 
+              ? 'সার্বজনীন ভিডিও ও অডিও ডাউনলোডার ইঞ্জিন • yt-dlp ও Web Share Target আর্কিটেকচার'
+              : 'Universal Video & Audio Downloader Engine • yt-dlp & Web Share Target Architecture'}
+          </p>
+          <div className="flex items-center gap-4 text-slate-400">
+            <button 
+              onClick={() => setActiveTab('batch')}
+              className="hover:text-white text-rose-400 font-medium transition flex items-center gap-1"
+            >
+              <span>{language === 'bn' ? 'ব্যাচ কিউ' : 'Batch Queue'}</span>
+            </button>
+            <span>•</span>
+            <button 
+              onClick={() => setActiveTab('pwa-guide')}
+              className="hover:text-rose-400 text-sky-400 transition flex items-center gap-1"
+            >
+              <span>{language === 'bn' ? 'PWA শেয়ার টিউটোরিয়াল' : 'PWA Share Guide'}</span>
+            </button>
+            <span>•</span>
+            <button 
+              onClick={() => setActiveTab('blueprint')}
+              className="hover:text-white transition"
+            >
+              {language === 'bn' ? 'অ্যান্ড্রয়েড ইন্টেন্ট কোড' : 'Android Intent Code'}
+            </button>
+            <span>•</span>
+            <button 
+              onClick={() => setActiveTab('history')}
+              className="hover:text-white transition"
+            >
+              {language === 'bn' ? 'হিস্টোরি' : 'History'}
+            </button>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
