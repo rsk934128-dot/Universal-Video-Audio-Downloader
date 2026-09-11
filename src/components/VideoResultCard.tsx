@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MediaFormat, VideoMetadata, Language, DownloadTask } from '../types';
 import { getTranslation } from '../utils/translations';
 import { PlatformBadge } from './PlatformBadge';
@@ -17,7 +17,8 @@ import {
   Flame,
   CheckCircle2,
   RefreshCw,
-  Loader2
+  Loader2,
+  Zap
 } from 'lucide-react';
 
 interface Props {
@@ -36,12 +37,25 @@ export const VideoResultCard: React.FC<Props> = ({
   language,
 }) => {
   const t = getTranslation(language);
-  const [activeFormatTab, setActiveFormatTab] = useState<'video' | 'audio'>('video');
+  
+  const audioFormats = video.formats.filter(f => f.type === 'audio');
+  const videoFormats = video.formats.filter(f => f.type === 'video');
+
+  const [activeFormatTab, setActiveFormatTab] = useState<'video' | 'audio'>(() => {
+    return videoFormats.length > 0 ? 'video' : 'audio';
+  });
   const [showPlayer, setShowPlayer] = useState(false);
   const [playerMode, setPlayerMode] = useState<'video' | 'audio'>('audio');
 
-  const audioFormats = video.formats.filter(f => f.type === 'audio');
-  const videoFormats = video.formats.filter(f => f.type === 'video');
+  // Keep format tab automatically aligned when a new media source is loaded
+  useEffect(() => {
+    if (videoFormats.length === 0 && audioFormats.length > 0) {
+      setActiveFormatTab('audio');
+    } else if (videoFormats.length > 0 && audioFormats.length === 0) {
+      setActiveFormatTab('video');
+    }
+  }, [video.id, videoFormats.length, audioFormats.length]);
+
   const displayedFormats = activeFormatTab === 'video' ? videoFormats : audioFormats;
 
   const ytId = extractYouTubeId(video.originalUrl) || (video.id && video.id.length === 11 ? video.id : null);
@@ -227,7 +241,7 @@ export const VideoResultCard: React.FC<Props> = ({
                   </div>
                 ) : (
                   <audio
-                    src={video.sampleAudioUrl || '/sample.mp3'}
+                    src={video.sampleAudioUrl || (/\.(mp3|m4a|wav|ogg)$/i.test(video.originalUrl) ? video.originalUrl : undefined)}
                     controls
                     autoPlay
                     className="w-full h-10 accent-rose-500"
@@ -249,7 +263,7 @@ export const VideoResultCard: React.FC<Props> = ({
                   />
                 ) : (
                   <video
-                    src={video.sampleVideoUrl || '/sample.mp4'}
+                    src={video.sampleVideoUrl || (/\.(mp4|webm|mov)$/i.test(video.originalUrl) ? video.originalUrl : undefined)}
                     controls
                     autoPlay
                     className="w-full h-full object-contain"
@@ -285,66 +299,83 @@ export const VideoResultCard: React.FC<Props> = ({
 
           {/* Audio vs Video Toggle Switch */}
           <div className="p-1 rounded-2xl bg-slate-950 border border-slate-800 flex items-center gap-1">
-            <button
-              id="format-tab-video"
-              onClick={() => setActiveFormatTab('video')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition ${
-                activeFormatTab === 'video'
-                  ? 'bg-rose-500 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Film className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'ভিডিও (MP4 HD)' : 'Video (MP4)'}</span>
-            </button>
+            {videoFormats.length > 0 && (
+              <button
+                id="format-tab-video"
+                onClick={() => setActiveFormatTab('video')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition ${
+                  activeFormatTab === 'video'
+                    ? 'bg-rose-500 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Film className="w-3.5 h-3.5" />
+                <span>{language === 'bn' ? `ভিডিও (${videoFormats.length})` : `Video (${videoFormats.length})`}</span>
+              </button>
+            )}
 
-            <button
-              id="format-tab-audio"
-              onClick={() => setActiveFormatTab('audio')}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition ${
-                activeFormatTab === 'audio'
-                  ? 'bg-rose-500 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Music className="w-3.5 h-3.5" />
-              <span>{language === 'bn' ? 'অডিও (MP3)' : 'Audio (MP3)'}</span>
-            </button>
+            {audioFormats.length > 0 && (
+              <button
+                id="format-tab-audio"
+                onClick={() => setActiveFormatTab('audio')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition ${
+                  activeFormatTab === 'audio'
+                    ? 'bg-rose-500 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Music className="w-3.5 h-3.5" />
+                <span>{language === 'bn' ? `অডিও (${audioFormats.length})` : `Audio (${audioFormats.length})`}</span>
+              </button>
+            )}
           </div>
         </div>
 
         {/* Format List Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {displayedFormats.map((format) => {
-            const isDownloadingThis = activeFormatId === format.id;
+        {displayedFormats.length === 0 ? (
+          <div className="p-8 rounded-2xl bg-slate-950/60 border border-slate-800 text-center text-slate-400 text-sm">
+            {language === 'bn' 
+              ? 'এই লিঙ্কের জন্য এই ক্যাটাগরিতে কোনো ফরম্যাট নেই। অন্য ক্যাটাগরি বেছে নিন।' 
+              : 'No formats found for this category. Please switch category above.'}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {displayedFormats.map((format) => {
+              const isDownloadingThis = activeFormatId === format.id;
 
-            return (
-              <div
-                key={format.id}
-                className={`p-4 rounded-2xl border transition-all duration-200 flex items-center justify-between gap-3 ${
-                  format.isRecommended
-                    ? 'bg-gradient-to-r from-rose-500/10 to-purple-500/10 border-rose-500/30 hover:border-rose-500/60'
-                    : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-white">
-                      {format.label}
-                    </span>
-                    <span className="text-xs uppercase font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
-                      .{format.ext}
-                    </span>
-                    {format.badge && (
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        format.isRecommended
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
-                      }`}>
-                        {format.badge}
+              return (
+                <div
+                  key={format.id}
+                  className={`p-4 rounded-2xl border transition-all duration-200 flex items-center justify-between gap-3 ${
+                    format.isRecommended
+                      ? 'bg-gradient-to-r from-rose-500/10 to-purple-500/10 border-rose-500/30 hover:border-rose-500/60'
+                      : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-bold text-white">
+                        {format.label}
                       </span>
-                    )}
-                  </div>
+                      <span className="text-xs uppercase font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
+                        .{format.ext}
+                      </span>
+                      {format.badge && (
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          format.isRecommended
+                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                            : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                        }`}>
+                          {format.badge}
+                        </span>
+                      )}
+                      {format.directDownloadUrl && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <Zap className="w-2.5 h-2.5 text-emerald-400" />
+                          <span>{language === 'bn' ? 'সরাসরি বাইপাস' : 'Direct Bypass'}</span>
+                        </span>
+                      )}
+                    </div>
 
                   <p className="text-xs text-slate-400 mt-0.5">
                     {format.subLabel}
@@ -416,6 +447,7 @@ export const VideoResultCard: React.FC<Props> = ({
             );
           })}
         </div>
+      )}
 
         {/* Alternative External Direct Download Mirrors for YouTube */}
         {isYouTube && ytId && (

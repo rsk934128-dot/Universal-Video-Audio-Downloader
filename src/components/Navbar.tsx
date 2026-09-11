@@ -20,6 +20,7 @@ interface Props {
   language: Language;
   setLanguage: (lang: Language) => void;
   historyCount: number;
+  onOpenBypassModal?: () => void;
 }
 
 export const Navbar: React.FC<Props> = ({
@@ -28,6 +29,7 @@ export const Navbar: React.FC<Props> = ({
   language,
   setLanguage,
   historyCount,
+  onOpenBypassModal,
 }) => {
   const t = getTranslation(language);
   const { isInstallable, isInstalled, isIOS, install } = usePWA();
@@ -155,6 +157,18 @@ export const Navbar: React.FC<Props> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {/* Bypass API Status Button */}
+          <button
+            id="bypass-api-btn"
+            onClick={onOpenBypassModal}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-500/10 border border-rose-500/30 text-rose-300 hover:bg-rose-500/20 hover:text-white transition shadow-sm"
+            title="Bypass API Engines Status"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="hidden xs:inline">{language === 'bn' ? 'বাইপাস API' : 'Bypass API'}</span>
+            <span className="xs:hidden">API</span>
+          </button>
+
           {/* Language Toggle */}
           <button
             id="lang-toggle-btn"

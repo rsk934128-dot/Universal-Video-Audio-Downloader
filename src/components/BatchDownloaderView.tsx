@@ -36,8 +36,7 @@ import {
   detectPlatform, 
   extractMultipleUrlsFromText, 
   extractVideoInfo, 
-  BATCH_FORMAT_PRESETS,
-  SAMPLE_VIDEOS 
+  BATCH_FORMAT_PRESETS
 } from '../services/videoExtractor';
 import { 
   startDownloadSimulation, 
@@ -99,12 +98,6 @@ export const BatchDownloaderView: React.FC<Props> = ({
     } catch {
       // Ignore clipboard permission errors
     }
-  };
-
-  // Load sample batch of 5 diverse videos
-  const handleLoadSampleBatch = () => {
-    const sampleUrls = SAMPLE_VIDEOS.map(s => s.url).join('\n');
-    setRawInput(sampleUrls);
   };
 
   // Import links from a .txt file
@@ -467,16 +460,6 @@ export const BatchDownloaderView: React.FC<Props> = ({
               <span>{copyFeedback ? (language === 'bn' ? 'পেস্ট হয়েছে!' : 'Pasted!') : t.pasteBtn}</span>
             </button>
 
-            {/* Load Sample Batch */}
-            <button
-              id="batch-sample-btn"
-              onClick={handleLoadSampleBatch}
-              className="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-rose-300 border border-slate-700 transition flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-rose-400" />
-              <span>{t.loadSampleBatch}</span>
-            </button>
-
             {/* Upload .txt File */}
             <label className="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1.5 cursor-pointer">
               <Upload className="w-3.5 h-3.5 text-emerald-400" />
@@ -666,16 +649,9 @@ export const BatchDownloaderView: React.FC<Props> = ({
             </h4>
             <p className="text-xs text-slate-500 max-w-sm mx-auto">
               {language === 'bn' 
-                ? 'উপরের বক্সে ইউটিউব, ফেসবুক বা ইনস্টাগ্রামের একাধিক লিঙ্ক পেস্ট করুন অথবা "নমুনা ব্যাচ লোড করুন" চাপুন।' 
-                : 'Paste YouTube, Facebook, or Instagram links into the box above, or click "Load Sample Batch" to test.'}
+                ? 'উপরের বক্সে আপনার কাঙ্ক্ষিত ভিডিও লিঙ্কগুলো (YouTube, Facebook, Instagram, ইত্যাদি) এক লাইনে একটি করে পেস্ট করুন।' 
+                : 'Paste your target video links (YouTube, Facebook, Instagram, etc.) into the box above, one URL per line.'}
             </p>
-            <button
-              onClick={handleLoadSampleBatch}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 transition inline-flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-rose-400" />
-              <span>{t.loadSampleBatch}</span>
-            </button>
           </div>
         ) : (
           <div className="space-y-3">

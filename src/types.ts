@@ -22,6 +22,7 @@ export interface MediaFormat {
   codec: string;
   badge?: string;
   isRecommended?: boolean;
+  directDownloadUrl?: string;
 }
 
 export interface VideoMetadata {
@@ -45,6 +46,7 @@ export interface VideoMetadata {
 export interface DownloadTask {
   id: string;
   videoId: string;
+  originalUrl?: string;
   title: string;
   platform: PlatformType;
   thumbnail: string;
@@ -62,6 +64,7 @@ export interface DownloadTask {
   error?: string;
   fileBlobUrl?: string;
   directUrl?: string;
+  engine?: string;
 }
 
 export interface BatchQueueItem {

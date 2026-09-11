@@ -12,11 +12,11 @@ import { CodeBlueprintModal } from './components/CodeBlueprintModal';
 import { PWAShareTargetTutorial } from './components/PWAShareTargetTutorial';
 import { BatchDownloaderView } from './components/BatchDownloaderView';
 import { ActiveDownloadBar } from './components/ActiveDownloadBar';
+import { BypassEngineStatusModal } from './components/BypassEngineStatusModal';
+import { MobilePersistenceBar } from './components/MobilePersistenceBar';
 import { 
   extractUrlFromText, 
-  extractVideoInfo, 
-  SAMPLE_VIDEOS, 
-  SampleVideoItem 
+  extractVideoInfo 
 } from './services/videoExtractor';
 import { 
   loadDownloadHistory, 
@@ -38,6 +38,7 @@ export default function App() {
   const [activeTask, setActiveTask] = useState<DownloadTask | null>(null);
   const [cancelFn, setCancelFn] = useState<(() => void) | null>(null);
   const [history, setHistory] = useState<DownloadTask[]>([]);
+  const [isBypassModalOpen, setIsBypassModalOpen] = useState<boolean>(false);
 
   // 1. Initialize history from localStorage
   useEffect(() => {
@@ -118,12 +119,85 @@ export default function App() {
       (taskId, errorMsg) => {
         setActiveFormatId(null);
         setCancelFn(null);
-        setActiveTask((prev) => prev ? { ...prev, status: 'failed', error: errorMsg } : null);
+        setActiveTask((prev) => {
+          if (!prev) return null;
+          const failedTask: DownloadTask = { ...prev, status: 'failed', error: errorMsg };
+          setHistory((h) => {
+            const updated = [failedTask, ...h.filter(i => i.id !== failedTask.id)];
+            saveDownloadHistory(updated);
+            return updated;
+          });
+          return failedTask;
+        });
       }
     );
 
     setCancelFn(() => cancel);
   }, [video]);
+
+  // Handle Auto-Retry from download history
+  const handleRetryHistoryItem = useCallback((item: DownloadTask) => {
+    // 1. Switch to Downloader tab
+    setActiveTab('downloader');
+
+    // 2. Resolve clean URL
+    const urlToUse = item.originalUrl || (item.videoId.startsWith('http') ? item.videoId : `https://www.youtube.com/watch?v=${item.videoId}`);
+    setInputUrl(urlToUse);
+
+    // 3. Construct target metadata for simulation
+    const targetVideo: VideoMetadata = {
+      id: item.videoId,
+      originalUrl: urlToUse,
+      platform: item.platform,
+      title: item.title,
+      thumbnail: item.thumbnail,
+      author: 'Creator / Media Channel',
+      duration: '03:45',
+      durationSeconds: 225,
+      viewCount: 'Verified Stream',
+      uploadDate: 'Recently updated',
+      formats: [item.format],
+    };
+
+    setVideo(targetVideo);
+    setActiveFormatId(item.format.id);
+
+    // 4. Re-invoke download simulation
+    const { cancel } = startDownloadSimulation(
+      targetVideo,
+      item.format,
+      (task) => {
+        setActiveTask(task);
+      },
+      (completedTask) => {
+        setActiveTask(completedTask);
+        setActiveFormatId(null);
+        setCancelFn(null);
+
+        setHistory((prev) => {
+          const updated = [completedTask, ...prev.filter(i => i.id !== item.id && i.id !== completedTask.id)];
+          saveDownloadHistory(updated);
+          return updated;
+        });
+      },
+      (taskId, errorMsg) => {
+        setActiveFormatId(null);
+        setCancelFn(null);
+        setActiveTask((prev) => {
+          if (!prev) return null;
+          const failedTask: DownloadTask = { ...prev, status: 'failed', error: errorMsg };
+          setHistory((prevH) => {
+            const updated = [failedTask, ...prevH.filter(i => i.id !== item.id && i.id !== failedTask.id)];
+            saveDownloadHistory(updated);
+            return updated;
+          });
+          return failedTask;
+        });
+      }
+    );
+
+    setCancelFn(() => cancel);
+  }, []);
 
   // Handle cancel download
   const handleCancelDownload = useCallback((taskId: string) => {
@@ -148,12 +222,6 @@ export default function App() {
     setHistory([]);
     saveDownloadHistory([]);
   }, []);
-
-  // Handle sample selection
-  const handleSelectSample = useCallback((sample: SampleVideoItem) => {
-    setInputUrl(sample.url);
-    executeAnalyze(sample.url);
-  }, [executeAnalyze]);
 
   // Handle test from PWA Share Target Tutorial
   const handleTestInDownloader = useCallback((testUrl: string) => {
@@ -180,6 +248,7 @@ export default function App() {
         language={language}
         setLanguage={setLanguage}
         historyCount={history.length}
+        onOpenBypassModal={() => setIsBypassModalOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -196,9 +265,9 @@ export default function App() {
             detectedSharedUrl={detectedSharedUrl}
             onAnalyze={executeAnalyze}
             onDownload={handleDownload}
-            onSelectSample={handleSelectSample}
             onOpenPWAGuide={() => setActiveTab('pwa-guide')}
             onSwitchToBatch={() => setActiveTab('batch')}
+            onOpenBypassModal={() => setIsBypassModalOpen(true)}
             language={language}
           />
         )}
@@ -222,6 +291,7 @@ export default function App() {
             history={history}
             onClearHistory={handleClearHistory}
             onDeleteItem={handleDeleteHistoryItem}
+            onRetry={handleRetryHistoryItem}
             onBackToDownloader={() => setActiveTab('downloader')}
             language={language}
           />
@@ -247,6 +317,13 @@ export default function App() {
       <ActiveDownloadBar
         task={activeTask}
         onCancel={handleCancelDownload}
+        language={language}
+      />
+
+      {/* Bypass API Engine Status Modal */}
+      <BypassEngineStatusModal
+        isOpen={isBypassModalOpen}
+        onClose={() => setIsBypassModalOpen(false)}
         language={language}
       />
 

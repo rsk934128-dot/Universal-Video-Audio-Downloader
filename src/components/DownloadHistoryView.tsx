@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { DownloadTask, Language } from '../types';
 import { getTranslation } from '../utils/translations';
-import { triggerBrowserDownload, createPlayableWavBlob } from '../services/downloadManager';
+import { triggerBrowserDownload } from '../services/downloadManager';
 import { 
   History, 
   Trash2, 
@@ -14,13 +14,16 @@ import {
   CheckCircle2,
   Play,
   Pause,
-  Disc3
+  Disc3,
+  RotateCw,
+  AlertCircle
 } from 'lucide-react';
 
 interface Props {
   history: DownloadTask[];
   onClearHistory: () => void;
   onDeleteItem: (id: string) => void;
+  onRetry: (item: DownloadTask) => void;
   onBackToDownloader: () => void;
   language: Language;
 }
@@ -29,6 +32,7 @@ export const DownloadHistoryView: React.FC<Props> = ({
   history,
   onClearHistory,
   onDeleteItem,
+  onRetry,
   onBackToDownloader,
   language,
 }) => {
@@ -45,21 +49,17 @@ export const DownloadHistoryView: React.FC<Props> = ({
   };
 
   const handleReDownload = async (item: DownloadTask) => {
-    const isAudio = item.format.type === 'audio';
-    try {
-      const target = isAudio ? '/sample.mp3' : '/sample.mp4';
-      const res = await fetch(target);
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(new Blob([blob], { type: isAudio ? 'audio/mpeg' : 'video/mp4' }));
-        triggerBrowserDownload(item.fileName, url);
-        return;
-      }
-    } catch (err) {
-      console.warn('Re-download fetch failed, using fallback', err);
+    if (item.fileBlobUrl) {
+      triggerBrowserDownload(item.fileName, item.fileBlobUrl);
+      return;
     }
-    const fallback = isAudio ? createPlayableWavBlob(3, 440) : new Blob([new Uint8Array(1024 * 64)], { type: 'video/mp4' });
-    triggerBrowserDownload(item.fileName, URL.createObjectURL(fallback));
+    if (item.directUrl) {
+      const proxyUrl = `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}&filename=${encodeURIComponent(item.fileName)}&stream=true`;
+      triggerBrowserDownload(item.fileName, proxyUrl);
+      return;
+    }
+    // Re-trigger actual target link download
+    onRetry(item);
   };
 
   return (
@@ -168,47 +168,83 @@ export const DownloadHistoryView: React.FC<Props> = ({
                         <span>{formatDate(item.createdAt)}</span>
                       </span>
                       <span>•</span>
-                      <span className="flex items-center gap-1 text-emerald-400 font-medium">
-                        <CheckCircle2 className="w-3 h-3" />
-                        <span>{language === 'bn' ? 'সংরক্ষিত' : 'Saved'}</span>
-                      </span>
+                      {item.status === 'failed' ? (
+                        <span className="flex items-center gap-1 text-rose-400 font-medium">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>{language === 'bn' ? 'ব্যর্থ হয়েছে' : 'Failed'}</span>
+                          {item.error && (
+                            <span className="text-[10px] text-slate-400 max-w-[140px] truncate" title={item.error}>
+                              ({item.error})
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-emerald-400 font-medium">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>{language === 'bn' ? 'সংরক্ষিত' : 'Saved'}</span>
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                  <button
-                    onClick={() => setPlayingId(playingId === item.id ? null : item.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
-                      playingId === item.id
-                        ? 'bg-rose-500 text-white border-rose-400'
-                        : 'bg-slate-800 hover:bg-slate-700 text-rose-300 border-slate-700'
-                    }`}
-                    title="Play media"
-                  >
-                    {playingId === item.id ? (
-                      <>
-                        <Pause className="w-3.5 h-3.5" />
-                        <span>{language === 'bn' ? 'থামান' : 'Stop'}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-3.5 h-3.5 fill-rose-400/40" />
-                        <span>{isAudio ? (language === 'bn' ? 'শুনুন' : 'Play Song') : (language === 'bn' ? 'প্লে করুন' : 'Watch')}</span>
-                      </>
-                    )}
-                  </button>
+                  {item.status === 'failed' ? (
+                    <button
+                      id={`retry-download-${item.id}`}
+                      onClick={() => onRetry(item)}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-slate-950 font-bold text-xs shadow-md shadow-amber-950/30 transition"
+                      title="Auto-Retry download simulation for this URL"
+                    >
+                      <RotateCw className="w-3.5 h-3.5 animate-spin-hover" />
+                      <span>{language === 'bn' ? 'অটো-রিট্রাই' : 'Auto Retry'}</span>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setPlayingId(playingId === item.id ? null : item.id)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
+                          playingId === item.id
+                            ? 'bg-rose-500 text-white border-rose-400'
+                            : 'bg-slate-800 hover:bg-slate-700 text-rose-300 border-slate-700'
+                        }`}
+                        title="Play media"
+                      >
+                        {playingId === item.id ? (
+                          <>
+                            <Pause className="w-3.5 h-3.5" />
+                            <span>{language === 'bn' ? 'থামান' : 'Stop'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-3.5 h-3.5 fill-rose-400/40" />
+                            <span>{isAudio ? (language === 'bn' ? 'শুনুন' : 'Play Song') : (language === 'bn' ? 'প্লে করুন' : 'Watch')}</span>
+                          </>
+                        )}
+                      </button>
 
-                  <button
-                    id={`redownload-${item.id}`}
-                    onClick={() => handleReDownload(item)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
-                    title="Download again"
-                  >
-                    <Download className="w-3.5 h-3.5 text-rose-400" />
-                    <span>{language === 'bn' ? 'আবার সেভ' : 'Download'}</span>
-                  </button>
+                      <button
+                        id={`redownload-${item.id}`}
+                        onClick={() => handleReDownload(item)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
+                        title="Download again"
+                      >
+                        <Download className="w-3.5 h-3.5 text-rose-400" />
+                        <span>{language === 'bn' ? 'আবার সেভ' : 'Download'}</span>
+                      </button>
+
+                      <button
+                        id={`re-execute-${item.id}`}
+                        onClick={() => onRetry(item)}
+                        className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-medium border border-slate-700 transition"
+                        title="Re-run stream download simulation"
+                      >
+                        <RotateCw className="w-3 h-3" />
+                        <span>{language === 'bn' ? 'রি-রান' : 'Re-run'}</span>
+                      </button>
+                    </>
+                  )}
 
                   <button
                     id={`delete-${item.id}`}
@@ -233,7 +269,7 @@ export const DownloadHistoryView: React.FC<Props> = ({
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-white line-clamp-1">{item.title}</p>
                         <audio
-                          src={item.fileBlobUrl || '/sample.mp3'}
+                          src={item.fileBlobUrl || (item.directUrl ? `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}` : undefined)}
                           controls
                           autoPlay
                           className="w-full mt-2 h-9 accent-rose-500"
@@ -244,7 +280,7 @@ export const DownloadHistoryView: React.FC<Props> = ({
                     <div className="flex flex-col items-center">
                       <div className="w-full max-w-md aspect-video rounded-xl overflow-hidden bg-black">
                         <video
-                          src={item.fileBlobUrl || '/sample.mp4'}
+                          src={item.fileBlobUrl || (item.directUrl ? `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}` : undefined)}
                           controls
                           autoPlay
                           className="w-full h-full object-contain"

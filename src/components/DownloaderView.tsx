@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Language, MediaFormat, VideoMetadata, DownloadTask } from '../types';
 import { getTranslation } from '../utils/translations';
-import { SAMPLE_VIDEOS, SampleVideoItem } from '../services/videoExtractor';
 import { ShareListenerBanner } from './ShareListenerBanner';
 import { VideoResultCard } from './VideoResultCard';
 import { 
@@ -10,7 +9,7 @@ import {
   ArrowRight, 
   X, 
   Loader2, 
-  Sparkles, 
+  Sparkles,
   ShieldAlert, 
   CheckCircle, 
   FileCheck2, 
@@ -36,9 +35,10 @@ interface Props {
   detectedSharedUrl: string | null;
   onAnalyze: (urlToAnalyze?: string) => void;
   onDownload: (format: MediaFormat) => void;
-  onSelectSample: (sample: SampleVideoItem) => void;
+  onSelectSample?: (sample: any) => void;
   onOpenPWAGuide?: () => void;
   onSwitchToBatch?: () => void;
+  onOpenBypassModal?: () => void;
   language: Language;
 }
 
@@ -53,9 +53,10 @@ export const DownloaderView: React.FC<Props> = ({
   detectedSharedUrl,
   onAnalyze,
   onDownload,
-  onSelectSample,
+  onSelectSample: _onSelectSample,
   onOpenPWAGuide,
   onSwitchToBatch,
+  onOpenBypassModal,
   language,
 }) => {
   const t = getTranslation(language);
@@ -220,33 +221,24 @@ export const DownloaderView: React.FC<Props> = ({
             <span>{error}</span>
           </div>
         )}
-      </div>
 
-      {/* Quick Try Sample Chips */}
-      <div className="mb-8">
-        <div className="flex items-center gap-2 mb-2.5">
-          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-          <span className="text-xs font-semibold text-slate-400">
-            {t.quickTry}
+        {/* Bypass Engine Status Banner */}
+        <div 
+          onClick={onOpenBypassModal}
+          className="mt-3.5 pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs cursor-pointer group"
+        >
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="text-slate-300 font-medium group-hover:text-white transition">
+              {language === 'bn' ? 'বাইপাস এপিআই ইঞ্জিন ৪টি স্তরে সক্রিয়' : 'Bypass API 4-tier active'}:
+            </span>
+            <span className="text-[11px] text-slate-400 hidden sm:inline">
+              TikTok HD No-Watermark • YouTube Android Client • Cloud Transcoder • Stream Proxy
+            </span>
+          </div>
+          <span className="text-[11px] font-semibold text-rose-400 group-hover:text-rose-300 flex items-center gap-1 shrink-0">
+            <span>{language === 'bn' ? 'ইঞ্জিন স্ট্যাটাস ➔' : 'View Engines ➔'}</span>
           </span>
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          {SAMPLE_VIDEOS.map((sample) => (
-            <button
-              key={sample.id}
-              onClick={() => onSelectSample(sample)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-300 text-xs font-medium whitespace-nowrap transition group shadow-sm"
-            >
-              {sample.platform === 'youtube' && <Youtube className="w-3.5 h-3.5 text-rose-500" />}
-              {sample.platform === 'facebook' && <Facebook className="w-3.5 h-3.5 text-blue-500" />}
-              {sample.platform === 'instagram' && <Instagram className="w-3.5 h-3.5 text-pink-500" />}
-              {sample.platform === 'direct' && <Tv className="w-3.5 h-3.5 text-emerald-400" />}
-              <span className="group-hover:text-white transition">{sample.name.split(':')[0]}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
-                {sample.duration}
-              </span>
-            </button>
-          ))}
         </div>
       </div>
 

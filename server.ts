@@ -1,6 +1,12 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { 
+  resolveBypassMedia, 
+  getBypassEngines, 
+  proxyStreamMedia,
+  inspectMediaUrl 
+} from './server/bypassEngine';
 
 async function startServer() {
   const app = express();
@@ -13,6 +19,44 @@ async function startServer() {
   // Health check
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
+  // Bypass Engines status endpoint
+  app.get('/api/bypass/engines', (_req: Request, res: Response) => {
+    res.json({
+      status: 'online',
+      activeCount: 4,
+      engines: getBypassEngines(),
+    });
+  });
+
+  // Dedicated Bypass Extract endpoint
+  app.post('/api/bypass/extract', async (req: Request, res: Response) => {
+    const { url, format } = req.body;
+    if (!url) {
+      return res.status(400).json({ success: false, error: 'URL is required' });
+    }
+    const result = await resolveBypassMedia(url, format || 'mp4');
+    return res.json(result);
+  });
+
+  // Deep media format inspection and resolution endpoint
+  app.post('/api/media/inspect', async (req: Request, res: Response) => {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: 'Missing url parameter' });
+    }
+
+    try {
+      const inspected = await inspectMediaUrl(url);
+      if (inspected) {
+        return res.json({ success: true, metadata: inspected });
+      }
+      return res.status(404).json({ success: false, error: 'Could not inspect media URL' });
+    } catch (err: any) {
+      console.error('Media inspection error:', err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   // Real metadata extraction using oEmbed
@@ -81,56 +125,27 @@ async function startServer() {
     }
   });
 
-  // Start media conversion (real YouTube / Facebook / Instagram / TikTok extractor)
+  // Start media conversion & bypass engine (TikTok / YouTube / Facebook / Instagram / Direct)
   app.post('/api/convert/start', async (req: Request, res: Response) => {
     const { url, format } = req.body;
     if (!url) {
       return res.status(400).json({ error: 'URL is required' });
     }
 
-    // Map requested format to loader.to format
-    // Options: mp3, m4a, 360, 480, 720, 1080, 1440, 4k
-    let targetFormat = 'mp3';
-    const fmt = String(format || 'mp3').toLowerCase();
-
-    if (fmt.includes('1080')) targetFormat = '1080';
-    else if (fmt.includes('720')) targetFormat = '720';
-    else if (fmt.includes('480')) targetFormat = '480';
-    else if (fmt.includes('360')) targetFormat = '360';
-    else if (fmt.includes('4k')) targetFormat = '4k';
-    else if (fmt.includes('m4a')) targetFormat = 'm4a';
-    else if (fmt.includes('flac')) targetFormat = 'flac';
-    else if (fmt.includes('wav')) targetFormat = 'wav';
-    else if (fmt.includes('mp4') || fmt.includes('video')) targetFormat = '720';
-    else targetFormat = 'mp3';
-
     try {
-      const apiUrl = `https://loader.to/ajax/download.php?format=${targetFormat}&url=${encodeURIComponent(url)}`;
-      const apiResp = await fetch(apiUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Referer': 'https://loader.to/',
-        },
-      });
-
-      if (!apiResp.ok) {
-        throw new Error(`Upstream returned ${apiResp.status}`);
+      const result = await resolveBypassMedia(url, format || 'mp4');
+      if (result.success) {
+        return res.json(result);
       }
-
-      const data = await apiResp.json();
-      return res.json({
-        success: data.success ?? true,
-        id: data.id,
-        progressUrl: data.progress_url || `https://lto2.affadaffa.com/api/progress?id=${data.id}`,
-        title: data.title || data.info?.title,
-        thumbnail: data.thumbnail_url || data.info?.image,
-        format: data.format,
+      return res.status(500).json({
+        success: false,
+        error: result.error || 'Failed to initialize media bypass stream for target URL',
       });
     } catch (err: any) {
       console.error('Convert start error:', err.message);
       return res.status(500).json({
         success: false,
-        error: err.message || 'Failed to initialize media stream',
+        error: err.message || 'Failed to initialize media stream for target URL',
       });
     }
   });
@@ -171,57 +186,21 @@ async function startServer() {
     }
   });
 
-  // Media stream proxy for direct device download
+  // Media stream proxy for direct device download (with Range support, CORS bypass, and resume capability)
   app.get('/api/proxy-download', async (req: Request, res: Response) => {
     const downloadUrl = req.query.url as string;
     const rawFilename = (req.query.filename as string) || 'download';
-    const stream = req.query.stream === 'true';
+    const noStream = req.query.stream === 'false';
 
     if (!downloadUrl) {
       return res.status(400).send('Missing url parameter');
     }
 
-    if (!stream) {
+    if (noStream) {
       return res.redirect(302, downloadUrl);
     }
 
-    try {
-      const upstream = await fetch(downloadUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Referer': 'https://loader.to/',
-        },
-      });
-
-      if (!upstream.ok) {
-        return res.redirect(302, downloadUrl);
-      }
-
-      const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
-      const contentLength = upstream.headers.get('content-length');
-
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(rawFilename)}"`);
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      if (contentLength) {
-        res.setHeader('Content-Length', contentLength);
-      }
-
-      if (req.method === 'HEAD') {
-        return res.end();
-      }
-
-      if (upstream.body) {
-        const { Readable } = await import('stream');
-        // @ts-ignore
-        const nodeStream = Readable.fromWeb(upstream.body);
-        nodeStream.pipe(res);
-      } else {
-        res.redirect(302, downloadUrl);
-      }
-    } catch {
-      res.redirect(302, downloadUrl);
-    }
+    return proxyStreamMedia(downloadUrl, rawFilename, req, res);
   });
 
   // Vite middleware in development or static serving in production

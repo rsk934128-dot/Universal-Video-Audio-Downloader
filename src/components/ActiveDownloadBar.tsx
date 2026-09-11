@@ -92,8 +92,14 @@ export const ActiveDownloadBar: React.FC<Props> = ({
                   {task.format.label}
                 </span>
               </div>
-              <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
+              <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5 flex-wrap">
                 <span className="font-medium text-slate-300">{getStatusText()}</span>
+                {task.engine && (
+                  <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/25 text-[10px] font-mono flex items-center gap-1">
+                    <span>⚡</span>
+                    <span>{task.engine}</span>
+                  </span>
+                )}
                 {!isCompleted && !isFailed && (
                   <>
                     <span>•</span>
