@@ -3,6 +3,7 @@ import { Language, MediaFormat, VideoMetadata, DownloadTask } from '../types';
 import { getTranslation } from '../utils/translations';
 import { ShareListenerBanner } from './ShareListenerBanner';
 import { VideoResultCard } from './VideoResultCard';
+import { VideoMiniPlayerPreview } from './VideoMiniPlayerPreview';
 import { 
   Link as LinkIcon, 
   ClipboardPaste, 
@@ -39,6 +40,7 @@ interface Props {
   onOpenPWAGuide?: () => void;
   onSwitchToBatch?: () => void;
   onOpenBypassModal?: () => void;
+  onOpenStorageSettings?: () => void;
   language: Language;
 }
 
@@ -57,6 +59,7 @@ export const DownloaderView: React.FC<Props> = ({
   onOpenPWAGuide,
   onSwitchToBatch,
   onOpenBypassModal,
+  onOpenStorageSettings,
   language,
 }) => {
   const t = getTranslation(language);
@@ -242,13 +245,26 @@ export const DownloaderView: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Extracted Video Card */}
+      {/* Visual Mini-Player Preview for Detected Video with Codec & Resolution Specs */}
+      {video && (
+        <VideoMiniPlayerPreview
+          video={video}
+          activeFormatId={activeFormatId}
+          activeTask={activeTask}
+          onDownload={onDownload}
+          onOpenStorageSettings={onOpenStorageSettings}
+          language={language}
+        />
+      )}
+
+      {/* Extracted Video Card with Comprehensive Format Options */}
       {video && (
         <VideoResultCard
           video={video}
           activeFormatId={activeFormatId}
           activeTask={activeTask}
           onDownload={onDownload}
+          onOpenStorageSettings={onOpenStorageSettings}
           language={language}
         />
       )}

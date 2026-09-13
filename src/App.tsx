@@ -14,6 +14,8 @@ import { BatchDownloaderView } from './components/BatchDownloaderView';
 import { ActiveDownloadBar } from './components/ActiveDownloadBar';
 import { BypassEngineStatusModal } from './components/BypassEngineStatusModal';
 import { MobilePersistenceBar } from './components/MobilePersistenceBar';
+import { StorageLocationModal } from './components/StorageLocationModal';
+import { FloatingShortcutDownloadButton } from './components/FloatingShortcutDownloadButton';
 import { 
   extractUrlFromText, 
   extractVideoInfo 
@@ -39,6 +41,7 @@ export default function App() {
   const [cancelFn, setCancelFn] = useState<(() => void) | null>(null);
   const [history, setHistory] = useState<DownloadTask[]>([]);
   const [isBypassModalOpen, setIsBypassModalOpen] = useState<boolean>(false);
+  const [isStorageModalOpen, setIsStorageModalOpen] = useState<boolean>(false);
 
   // 1. Initialize history from localStorage
   useEffect(() => {
@@ -135,6 +138,67 @@ export default function App() {
     setCancelFn(() => cancel);
   }, [video]);
 
+  // Handle instant analyze & auto-download from floating shortcut button
+  const handleAnalyzeAndDownload = useCallback(async (targetUrl: string, autoStartFormat?: 'video' | 'audio') => {
+    const cleanUrl = extractUrlFromText(targetUrl) || targetUrl.trim();
+    if (!cleanUrl) return;
+
+    setInputUrl(cleanUrl);
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const metadata = await extractVideoInfo(cleanUrl);
+      setVideo(metadata);
+      setActiveTab('downloader');
+
+      // If auto-start format is requested, trigger download right away
+      if (autoStartFormat && metadata.formats && metadata.formats.length > 0) {
+        const matchingFormat = metadata.formats.find(f => f.type === autoStartFormat && (f.quality.includes('1080') || f.quality.includes('320') || f.isRecommended))
+          || metadata.formats.find(f => f.type === autoStartFormat)
+          || metadata.formats[0];
+
+        if (matchingFormat) {
+          setActiveFormatId(matchingFormat.id);
+          const { cancel } = startDownloadSimulation(
+            metadata,
+            matchingFormat,
+            (task) => setActiveTask(task),
+            (completedTask) => {
+              setActiveTask(completedTask);
+              setActiveFormatId(null);
+              setCancelFn(null);
+              setHistory((prev) => {
+                const updated = [completedTask, ...prev.filter(i => i.id !== completedTask.id)];
+                saveDownloadHistory(updated);
+                return updated;
+              });
+            },
+            (taskId, errorMsg) => {
+              setActiveFormatId(null);
+              setCancelFn(null);
+              setActiveTask((prev) => {
+                if (!prev) return null;
+                const failedTask: DownloadTask = { ...prev, status: 'failed', error: errorMsg };
+                setHistory((h) => {
+                  const updated = [failedTask, ...h.filter(i => i.id !== failedTask.id)];
+                  saveDownloadHistory(updated);
+                  return updated;
+                });
+                return failedTask;
+              });
+            }
+          );
+          setCancelFn(() => cancel);
+        }
+      }
+    } catch (err: any) {
+      setError(err?.message || (language === 'bn' ? 'ভিডিও তথ্য বের করতে সমস্যা হয়েছে' : 'Failed to retrieve video information'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [language]);
+
   // Handle Auto-Retry from download history
   const handleRetryHistoryItem = useCallback((item: DownloadTask) => {
     // 1. Switch to Downloader tab
@@ -223,6 +287,12 @@ export default function App() {
     saveDownloadHistory([]);
   }, []);
 
+  // Handle import history from backup (JSON / CSV)
+  const handleImportHistory = useCallback((updatedHistory: DownloadTask[]) => {
+    setHistory(updatedHistory);
+    saveDownloadHistory(updatedHistory);
+  }, []);
+
   // Handle test from PWA Share Target Tutorial
   const handleTestInDownloader = useCallback((testUrl: string) => {
     setInputUrl(testUrl);
@@ -241,7 +311,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white">
-      {/* Navigation Bar */}
+      {/* Top Navigation Bar */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -249,10 +319,14 @@ export default function App() {
         setLanguage={setLanguage}
         historyCount={history.length}
         onOpenBypassModal={() => setIsBypassModalOpen(true)}
+        onOpenStorageModal={() => setIsStorageModalOpen(true)}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 pt-4 pb-28">
+        {/* Mobile Real-time Keep-Alive & Notification Control */}
+        <MobilePersistenceBar onOpenStorageModal={() => setIsStorageModalOpen(true)} />
+
         {activeTab === 'downloader' && (
           <DownloaderView
             inputUrl={inputUrl}
@@ -268,6 +342,7 @@ export default function App() {
             onOpenPWAGuide={() => setActiveTab('pwa-guide')}
             onSwitchToBatch={() => setActiveTab('batch')}
             onOpenBypassModal={() => setIsBypassModalOpen(true)}
+            onOpenStorageSettings={() => setIsStorageModalOpen(true)}
             language={language}
           />
         )}
@@ -292,6 +367,7 @@ export default function App() {
             onClearHistory={handleClearHistory}
             onDeleteItem={handleDeleteHistoryItem}
             onRetry={handleRetryHistoryItem}
+            onImportHistory={handleImportHistory}
             onBackToDownloader={() => setActiveTab('downloader')}
             language={language}
           />
@@ -317,6 +393,12 @@ export default function App() {
       <ActiveDownloadBar
         task={activeTask}
         onCancel={handleCancelDownload}
+        onRetry={(failedTask) => {
+          if (failedTask && failedTask.format) {
+            handleDownload(failedTask.format);
+          }
+        }}
+        onOpenStorageSettings={() => setIsStorageModalOpen(true)}
         language={language}
       />
 
@@ -324,6 +406,24 @@ export default function App() {
       <BypassEngineStatusModal
         isOpen={isBypassModalOpen}
         onClose={() => setIsBypassModalOpen(false)}
+        language={language}
+      />
+
+      {/* Storage Location & SD Card Preference Modal */}
+      <StorageLocationModal
+        isOpen={isStorageModalOpen}
+        onClose={() => setIsStorageModalOpen(false)}
+        language={language}
+      />
+
+      {/* Always Visible Floating Shortcut Download Button */}
+      <FloatingShortcutDownloadButton
+        video={video}
+        onDownload={handleDownload}
+        onAnalyzeAndDownload={handleAnalyzeAndDownload}
+        onOpenStorageModal={() => setIsStorageModalOpen(true)}
+        isLoading={isLoading}
+        hasActiveTask={!!activeTask}
         language={language}
       />
 
@@ -335,7 +435,14 @@ export default function App() {
               ? 'সার্বজনীন ভিডিও ও অডিও ডাউনলোডার ইঞ্জিন • yt-dlp ও Web Share Target আর্কিটেকচার'
               : 'Universal Video & Audio Downloader Engine • yt-dlp & Web Share Target Architecture'}
           </p>
-          <div className="flex items-center gap-4 text-slate-400">
+          <div className="flex items-center gap-4 text-slate-400 flex-wrap justify-center">
+            <button 
+              onClick={() => setIsStorageModalOpen(true)}
+              className="hover:text-white text-emerald-400 font-medium transition flex items-center gap-1"
+            >
+              <span>{language === 'bn' ? '💾 মেমোরি কার্ড সেটিংস' : '💾 SD Card Settings'}</span>
+            </button>
+            <span>•</span>
             <button 
               onClick={() => setActiveTab('batch')}
               className="hover:text-white text-rose-400 font-medium transition flex items-center gap-1"

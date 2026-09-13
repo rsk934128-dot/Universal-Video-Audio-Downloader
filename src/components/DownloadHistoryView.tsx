@@ -2,6 +2,12 @@ import React, { useState } from 'react';
 import { DownloadTask, Language } from '../types';
 import { getTranslation } from '../utils/translations';
 import { triggerBrowserDownload } from '../services/downloadManager';
+import { storagePreferenceManager } from '../services/storagePreferenceManager';
+import { 
+  exportHistoryAsJSON, 
+  exportHistoryAsCSV 
+} from '../services/historyBackupService';
+import { HistoryBackupModal } from './HistoryBackupModal';
 import { 
   History, 
   Trash2, 
@@ -11,12 +17,17 @@ import {
   Calendar, 
   HardDrive, 
   ArrowLeft, 
-  CheckCircle2,
-  Play,
-  Pause,
-  Disc3,
-  RotateCw,
-  AlertCircle
+  CheckCircle2, 
+  Play, 
+  Pause, 
+  Disc3, 
+  RotateCw, 
+  AlertCircle, 
+  Share2,
+  Database,
+  Upload,
+  FileSpreadsheet,
+  FileCode
 } from 'lucide-react';
 
 interface Props {
@@ -24,6 +35,7 @@ interface Props {
   onClearHistory: () => void;
   onDeleteItem: (id: string) => void;
   onRetry: (item: DownloadTask) => void;
+  onImportHistory?: (updatedHistory: DownloadTask[], count: number, mode: 'merge' | 'replace') => void;
   onBackToDownloader: () => void;
   language: Language;
 }
@@ -33,11 +45,15 @@ export const DownloadHistoryView: React.FC<Props> = ({
   onClearHistory,
   onDeleteItem,
   onRetry,
+  onImportHistory,
   onBackToDownloader,
   language,
 }) => {
   const t = getTranslation(language);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [sdFeedback, setSdFeedback] = useState<{ id: string; msg: string } | null>(null);
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState<boolean>(false);
+  const [feedbackToast, setFeedbackToast] = useState<string | null>(null);
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US', {
@@ -46,6 +62,24 @@ export const DownloadHistoryView: React.FC<Props> = ({
       hour: '2-digit',
       minute: '2-digit',
     });
+  };
+
+  const handleSaveToSDCard = async (item: DownloadTask) => {
+    const targetUrl = item.fileBlobUrl || (item.directUrl ? `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}&filename=${encodeURIComponent(item.fileName)}&stream=true` : null);
+    if (!targetUrl) {
+      onRetry(item);
+      return;
+    }
+
+    const res = await storagePreferenceManager.saveFileToUserStorage(
+      item.fileName,
+      targetUrl,
+      { forcePicker: true, destinationOverride: 'sd_card' }
+    );
+    if (res.success) {
+      setSdFeedback({ id: item.id, msg: res.message });
+      setTimeout(() => setSdFeedback(null), 4000);
+    }
   };
 
   const handleReDownload = async (item: DownloadTask) => {
@@ -62,10 +96,40 @@ export const DownloadHistoryView: React.FC<Props> = ({
     onRetry(item);
   };
 
+  const handleQuickJSON = () => {
+    if (history.length === 0) return;
+    exportHistoryAsJSON(history);
+    setFeedbackToast(language === 'bn' ? 'JSON ব্যাকআপ ডাউনলোড সম্পন্ন হয়েছে!' : 'JSON backup downloaded!');
+    setTimeout(() => setFeedbackToast(null), 3500);
+  };
+
+  const handleQuickCSV = () => {
+    if (history.length === 0) return;
+    exportHistoryAsCSV(history);
+    setFeedbackToast(language === 'bn' ? 'CSV স্প্রেডশিট ডাউনলোড সম্পন্ন হয়েছে!' : 'CSV spreadsheet downloaded!');
+    setTimeout(() => setFeedbackToast(null), 3500);
+  };
+
   return (
     <div className="w-full max-w-4xl mx-auto py-4">
+      {/* Toast Feedback */}
+      {feedbackToast && (
+        <div className="mb-4 px-4 py-3 rounded-2xl bg-emerald-950/90 border border-emerald-500/40 text-emerald-300 text-xs flex items-center justify-between shadow-lg animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{feedbackToast}</span>
+          </div>
+          <button
+            onClick={() => setFeedbackToast(null)}
+            className="text-emerald-400 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="flex items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <button
             onClick={onBackToDownloader}
@@ -83,16 +147,67 @@ export const DownloadHistoryView: React.FC<Props> = ({
           </h2>
         </div>
 
-        {history.length > 0 && (
+        {/* Toolbar: Backup, Export, Import, Clear */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Main Backup / Restore Modal Button */}
           <button
-            id="clear-all-history-btn"
-            onClick={onClearHistory}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 transition"
+            id="open-backup-modal-btn"
+            onClick={() => setIsBackupModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-gradient-to-r from-rose-500/20 to-purple-500/20 hover:from-rose-500/30 hover:to-purple-500/30 text-rose-200 border border-rose-500/30 transition shadow-sm"
+            title="Backup & Restore History"
           >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>{t.clearHistory}</span>
+            <Database className="w-3.5 h-3.5 text-rose-400" />
+            <span>{language === 'bn' ? 'ব্যাকআপ / রিস্টোর' : 'Backup & Restore'}</span>
           </button>
-        )}
+
+          {/* Quick JSON export */}
+          {history.length > 0 && (
+            <button
+              id="quick-export-json-btn"
+              onClick={handleQuickJSON}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700 transition"
+              title="Export as JSON file"
+            >
+              <FileCode className="w-3.5 h-3.5 text-rose-400" />
+              <span>JSON</span>
+            </button>
+          )}
+
+          {/* Quick CSV export */}
+          {history.length > 0 && (
+            <button
+              id="quick-export-csv-btn"
+              onClick={handleQuickCSV}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-850 hover:bg-slate-800 text-slate-300 border border-slate-700 transition"
+              title="Export as CSV spreadsheet"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              <span>CSV</span>
+            </button>
+          )}
+
+          {/* Quick Import Button */}
+          <button
+            id="quick-import-history-btn"
+            onClick={() => setIsBackupModalOpen(true)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-850 hover:bg-slate-800 text-emerald-300 border border-emerald-500/30 transition"
+            title="Import history backup"
+          >
+            <Upload className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">{language === 'bn' ? 'ইম্পোর্ট' : 'Import'}</span>
+          </button>
+
+          {history.length > 0 && (
+            <button
+              id="clear-all-history-btn"
+              onClick={onClearHistory}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20 transition"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>{t.clearHistory}</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* History List */}
@@ -107,12 +222,22 @@ export const DownloadHistoryView: React.FC<Props> = ({
           <p className="text-xs sm:text-sm text-slate-400 max-w-sm mx-auto mt-1 mb-6">
             {t.noHistoryDesc}
           </p>
-          <button
-            onClick={onBackToDownloader}
-            className="px-5 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs sm:text-sm font-semibold shadow-lg shadow-rose-500/20 transition"
-          >
-            {language === 'bn' ? 'একটি ভিডিও ডাউনলোড করুন' : 'Download a Video Now'}
-          </button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <button
+              onClick={onBackToDownloader}
+              className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs sm:text-sm font-semibold shadow-lg shadow-rose-500/20 transition"
+            >
+              {language === 'bn' ? 'একটি ভিডিও ডাউনলোড করুন' : 'Download a Video Now'}
+            </button>
+            <button
+              id="empty-state-import-btn"
+              onClick={() => setIsBackupModalOpen(true)}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs sm:text-sm font-semibold border border-slate-700 transition"
+            >
+              <Upload className="w-4 h-4 text-emerald-400" />
+              <span>{language === 'bn' ? 'পূর্ববর্তী ব্যাকআপ ইম্পোর্ট করুন (.json / .csv)' : 'Import Backup File (.json / .csv)'}</span>
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -235,6 +360,17 @@ export const DownloadHistoryView: React.FC<Props> = ({
                       </button>
 
                       <button
+                        id={`sd-save-${item.id}`}
+                        onClick={() => handleSaveToSDCard(item)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 text-xs font-semibold border border-emerald-500/30 transition shadow-sm"
+                        title="Save directly to Memory Card (SD Card)"
+                      >
+                        <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="hidden sm:inline">{language === 'bn' ? 'মেমোরি কার্ড' : 'SD Card'}</span>
+                        <span className="sm:hidden">SD</span>
+                      </button>
+
+                      <button
                         id={`re-execute-${item.id}`}
                         onClick={() => onRetry(item)}
                         className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-medium border border-slate-700 transition"
@@ -259,6 +395,14 @@ export const DownloadHistoryView: React.FC<Props> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Feedback toast for saving to SD card */}
+              {sdFeedback && sdFeedback.id === item.id && (
+                <div className="mt-2 px-3 py-1.5 rounded-xl bg-emerald-950/90 border border-emerald-500/40 text-[11px] text-emerald-300 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>{sdFeedback.msg}</span>
+                </div>
+              )}
 
               {/* Inline player if active */}
               {playingId === item.id && (
@@ -295,6 +439,25 @@ export const DownloadHistoryView: React.FC<Props> = ({
           })}
         </div>
       )}
+
+      {/* History Backup & Import Modal */}
+      <HistoryBackupModal
+        isOpen={isBackupModalOpen}
+        onClose={() => setIsBackupModalOpen(false)}
+        history={history}
+        onImportComplete={(updated, count, mode) => {
+          if (onImportHistory) {
+            onImportHistory(updated, count, mode);
+          }
+          setFeedbackToast(
+            language === 'bn'
+              ? `${count} টি নতুন ডাউনলোড রেকর্ড সফলভাবে সংরক্ষিত হয়েছে!`
+              : `Successfully imported ${count} download records!`
+          );
+          setTimeout(() => setFeedbackToast(null), 4000);
+        }}
+        language={language}
+      />
     </div>
   );
 };

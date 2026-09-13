@@ -87,3 +87,13 @@ export interface BatchQueueItem {
 
 export type AppTab = 'downloader' | 'batch' | 'history' | 'blueprint' | 'pwa-guide' | 'settings';
 export type Language = 'bn' | 'en';
+
+export type StorageDestination = 'sd_card' | 'phone_memory' | 'ask_each_time' | 'browser_default';
+
+export interface StorageConfig {
+  destination: StorageDestination;
+  customFolder?: string;
+  useNativePicker: boolean;
+  autoSaveToSD: boolean;
+  lastUsedPath?: string;
+}

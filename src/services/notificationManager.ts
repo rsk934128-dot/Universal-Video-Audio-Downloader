@@ -77,7 +77,7 @@ class NotificationManager {
           renotify: true,
           vibrate: [200, 100, 200],
           data,
-        });
+        } as any);
         return;
       }
     } catch (swErr) {

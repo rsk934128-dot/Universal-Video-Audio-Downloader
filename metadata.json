@@ -1,6 +1,6 @@
 {
   "name": "Universal Video & Audio Downloader",
-  "description": "Download MP3 and HD MP4 videos shared from YouTube, Facebook, Instagram and other platforms with Web Share Target support, multi-URL batch processing queue, format selector, and quality options.",
+  "description": "Download MP3 and HD MP4 videos shared from YouTube, Facebook, Instagram and other platforms with Web Share Target support, multi-URL batch processing queue, format selector, SD card storage routing, and JSON/CSV history backup and restore.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

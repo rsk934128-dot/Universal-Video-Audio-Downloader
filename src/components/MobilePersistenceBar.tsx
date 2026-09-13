@@ -10,22 +10,31 @@ import {
   CheckCircle2, 
   Info, 
   X,
-  Share2
+  Share2,
+  HardDrive
 } from 'lucide-react';
 import { backgroundKeepAlive } from '../services/backgroundKeepAlive';
 import { notificationManager, NotificationPermissionState } from '../services/notificationManager';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { storagePreferenceManager } from '../services/storagePreferenceManager';
+import { StorageConfig } from '../types';
 
-export const MobilePersistenceBar: React.FC = () => {
+interface Props {
+  onOpenStorageModal?: () => void;
+}
+
+export const MobilePersistenceBar: React.FC<Props> = ({ onOpenStorageModal }) => {
   const [isActive, setIsActive] = useState<boolean>(backgroundKeepAlive.isActive());
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [notifState, setNotifState] = useState<NotificationPermissionState>(notificationManager.getPermissionStatus());
   const [showIOSGuide, setShowIOSGuide] = useState(false);
   const [testSent, setTestSent] = useState(false);
+  const [storageConfig, setStorageConfig] = useState<StorageConfig>(storagePreferenceManager.getConfig());
 
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
 
   useEffect(() => {
+    const unsubStorage = storagePreferenceManager.subscribe((c) => setStorageConfig(c));
     const unsub = backgroundKeepAlive.subscribe((active) => {
       setIsActive(active);
     });
@@ -37,6 +46,7 @@ export const MobilePersistenceBar: React.FC = () => {
     window.addEventListener('offline', handleOffline);
 
     return () => {
+      unsubStorage();
       unsub();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -127,8 +137,25 @@ export const MobilePersistenceBar: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Controls: Toggle Active, Notification Button, Install App */}
+            {/* Right Controls: Toggle Active, Notification Button, Storage Config, Install App */}
             <div className="flex flex-wrap items-center gap-2 pt-2 md:pt-0 border-t md:border-t-0 border-slate-700/50">
+              {/* Storage Destination Button (SD Card / Phone Memory) */}
+              <button
+                id="bar-storage-config-btn"
+                onClick={onOpenStorageModal}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 transition shadow-sm"
+                title="মেমোরি কার্ড ও ফোন স্টোরেজ কনফিগার করুন"
+              >
+                <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+                <span>
+                  {storageConfig.destination === 'sd_card'
+                    ? 'মেমোরি কার্ড (SD)'
+                    : storageConfig.destination === 'phone_memory'
+                    ? 'ফোন মেমোরি'
+                    : 'স্টোরেজ'}
+                </span>
+              </button>
+
               {/* Toggle Switch */}
               <button
                 id="toggle-background-persistence"

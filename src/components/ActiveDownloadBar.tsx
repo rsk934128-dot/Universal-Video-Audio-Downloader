@@ -1,7 +1,8 @@
-import React from 'react';
-import { DownloadTask, Language } from '../types';
+import React, { useState, useEffect } from 'react';
+import { DownloadTask, Language, StorageConfig } from '../types';
 import { getTranslation } from '../utils/translations';
 import { triggerBrowserDownload } from '../services/downloadManager';
+import { storagePreferenceManager } from '../services/storagePreferenceManager';
 import { 
   Download, 
   CheckCircle2, 
@@ -10,28 +11,57 @@ import {
   Play, 
   FileAudio, 
   FileVideo, 
-  RefreshCw 
+  RefreshCw,
+  HardDrive,
+  Smartphone,
+  Share2,
+  FolderDown
 } from 'lucide-react';
 
 interface Props {
   task: DownloadTask | null;
   onCancel: (taskId: string) => void;
+  onRetry?: (task: DownloadTask) => void;
   onOpenPreview?: (task: DownloadTask) => void;
+  onOpenStorageSettings?: () => void;
   language: Language;
 }
 
 export const ActiveDownloadBar: React.FC<Props> = ({
   task,
   onCancel,
+  onRetry,
   onOpenPreview,
+  onOpenStorageSettings,
   language,
 }) => {
   const t = getTranslation(language);
+  const [storageConfig, setStorageConfig] = useState<StorageConfig>(storagePreferenceManager.getConfig());
+  const [savedToSDMsg, setSavedToSDMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    return storagePreferenceManager.subscribe((c) => setStorageConfig(c));
+  }, []);
+
   if (!task) return null;
 
   const isCompleted = task.status === 'completed';
   const isFailed = task.status === 'failed';
   const isAudio = task.format.type === 'audio';
+
+  const handleSaveDirectToSD = async () => {
+    const targetUrl = task.fileBlobUrl || task.directUrl;
+    if (!targetUrl) return;
+    const res = await storagePreferenceManager.saveFileToUserStorage(
+      task.fileName,
+      targetUrl,
+      { forcePicker: true, destinationOverride: 'sd_card' }
+    );
+    if (res.success) {
+      setSavedToSDMsg(res.message);
+      setTimeout(() => setSavedToSDMsg(null), 4000);
+    }
+  };
 
   const getStatusText = () => {
     switch (task.status) {
@@ -119,17 +149,26 @@ export const ActiveDownloadBar: React.FC<Props> = ({
           {/* Action buttons */}
           <div className="flex items-center gap-2 shrink-0">
             {isCompleted && (task.fileBlobUrl || task.directUrl) && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Save to SD Card Button */}
+                <button
+                  id="save-to-sd-card-btn"
+                  onClick={handleSaveDirectToSD}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-950/40 transition"
+                  title="Save directly to Memory Card (SD Card)"
+                >
+                  <HardDrive className="w-3.5 h-3.5 text-white" />
+                  <span>{language === 'bn' ? 'মেমোরি কার্ডে সেভ' : 'Save to SD'}</span>
+                </button>
+
                 <a
                   id="direct-save-file-link"
-                  href={task.directUrl || task.fileBlobUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={task.fileBlobUrl || task.directUrl}
                   download={task.fileName}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-xs font-bold shadow-lg shadow-emerald-950/40 transition"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold border border-slate-700 transition"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>{language === 'bn' ? 'ফাইল সেভ করুন' : 'Save File'}</span>
+                  <span>{language === 'bn' ? 'ফাইল সেভ' : 'Save File'}</span>
                 </a>
 
                 <button
@@ -142,6 +181,18 @@ export const ActiveDownloadBar: React.FC<Props> = ({
                   <span>{language === 'bn' ? 'পুনরায়' : 'Retry'}</span>
                 </button>
               </div>
+            )}
+
+            {isFailed && (
+              <button
+                id="retry-failed-download-btn"
+                onClick={() => onRetry?.(task)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-950/40 transition"
+                title="Retry download"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-white" />
+                <span>{language === 'bn' ? 'পুনরায় চেষ্টা করুন' : 'Retry'}</span>
+              </button>
             )}
 
             {!isCompleted && !isFailed && (
@@ -168,6 +219,16 @@ export const ActiveDownloadBar: React.FC<Props> = ({
           </div>
         </div>
 
+        {/* Saved to SD confirmation alert if triggered */}
+        {savedToSDMsg && (
+          <div className="mb-2 px-3 py-1.5 rounded-xl bg-emerald-950/80 border border-emerald-500/40 text-[11px] text-emerald-300 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{savedToSDMsg}</span>
+            </span>
+          </div>
+        )}
+
         {/* Progress Bar */}
         <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden relative">
           <div
@@ -182,13 +243,39 @@ export const ActiveDownloadBar: React.FC<Props> = ({
           />
         </div>
 
-        {/* Progress % indicator */}
-        <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1.5">
-          <span>
-            {isCompleted 
-              ? (language === 'bn' ? 'ডিভাইসের Downloads ফোল্ডারে সংরক্ষিত' : 'Stored in Downloads folder')
-              : `${task.progress}%`}
-          </span>
+        {/* Progress % indicator & Storage Destination Selector */}
+        <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1.5 flex-wrap gap-1">
+          <div className="flex items-center gap-2">
+            <span>
+              {isCompleted 
+                ? (language === 'bn' ? 'ডাউনলোড সফল হয়েছে' : 'Download finished')
+                : `${task.progress}%`}
+            </span>
+            {/* Clickable Storage Badge */}
+            <button
+              onClick={onOpenStorageSettings}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-800/90 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:border-emerald-500/40 transition cursor-pointer"
+              title="Change Storage Destination"
+            >
+              {storageConfig.destination === 'sd_card' ? (
+                <>
+                  <HardDrive className="w-3 h-3 text-emerald-400" />
+                  <span className="text-emerald-300 font-semibold">{language === 'bn' ? 'গন্তব্য: মেমোরি কার্ড' : 'Dest: SD Card'}</span>
+                </>
+              ) : storageConfig.destination === 'phone_memory' ? (
+                <>
+                  <Smartphone className="w-3 h-3 text-blue-400" />
+                  <span className="text-blue-300 font-semibold">{language === 'bn' ? 'গন্তব্য: ফোন মেমোরি' : 'Dest: Phone Memory'}</span>
+                </>
+              ) : (
+                <>
+                  <FolderDown className="w-3 h-3 text-purple-400" />
+                  <span className="text-purple-300 font-semibold">{language === 'bn' ? 'গন্তব্য: প্রতিবার জিজ্ঞেস' : 'Dest: Prompt'}</span>
+                </>
+              )}
+            </button>
+          </div>
+
           {!isCompleted && !isFailed && (
             <span className="font-mono text-slate-300">{task.speed}</span>
           )}

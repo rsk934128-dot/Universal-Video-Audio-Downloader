@@ -18,14 +18,18 @@ import {
   CheckCircle2,
   RefreshCw,
   Loader2,
-  Zap
+  Zap,
+  HardDrive
 } from 'lucide-react';
+import { storagePreferenceManager } from '../services/storagePreferenceManager';
+import { StorageConfig } from '../types';
 
 interface Props {
   video: VideoMetadata;
   activeFormatId: string | null;
   activeTask?: DownloadTask | null;
   onDownload: (format: MediaFormat) => void;
+  onOpenStorageSettings?: () => void;
   language: Language;
 }
 
@@ -34,9 +38,15 @@ export const VideoResultCard: React.FC<Props> = ({
   activeFormatId,
   activeTask,
   onDownload,
+  onOpenStorageSettings,
   language,
 }) => {
   const t = getTranslation(language);
+  const [storageConfig, setStorageConfig] = useState<StorageConfig>(storagePreferenceManager.getConfig());
+
+  useEffect(() => {
+    return storagePreferenceManager.subscribe((c) => setStorageConfig(c));
+  }, []);
   
   const audioFormats = video.formats.filter(f => f.type === 'audio');
   const videoFormats = video.formats.filter(f => f.type === 'video');
@@ -295,6 +305,30 @@ export const VideoResultCard: React.FC<Props> = ({
                 ? 'আপনার প্রয়োজন অনুযায়ী রেজোলিউশন বা অডিও কোয়ালিটি বেছে নিন'
                 : 'Select resolution or audio bitrate for direct download'}
             </p>
+            {/* Storage Destination Indicator */}
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                id="result-card-storage-dest-btn"
+                onClick={onOpenStorageSettings}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-950 border border-slate-800 hover:border-emerald-500/40 text-[11px] text-slate-300 transition"
+                title="Change Storage Destination"
+              >
+                <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-slate-400">{language === 'bn' ? 'সংরক্ষণ:' : 'Save to:'}</span>
+                <span className="font-semibold text-emerald-300">
+                  {storageConfig.destination === 'sd_card'
+                    ? (language === 'bn' ? 'মেমোরি কার্ড (SD Card)' : 'SD Card')
+                    : storageConfig.destination === 'phone_memory'
+                    ? (language === 'bn' ? 'ফোন মেমোরি' : 'Phone Memory')
+                    : (language === 'bn' ? 'প্রতিবার নির্বাচন' : 'Ask Each Time')}
+                </span>
+                {onOpenStorageSettings && (
+                  <span className="text-emerald-400 hover:underline ml-1 font-medium">
+                    {language === 'bn' ? '(পরিবর্তন)' : '(Change)'}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Audio vs Video Toggle Switch */}
@@ -393,9 +427,7 @@ export const VideoResultCard: React.FC<Props> = ({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <a
                       id={`save-file-link-${format.id}`}
-                      href={activeTask.directUrl || activeTask.fileBlobUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      href={activeTask.fileBlobUrl || activeTask.directUrl}
                       download={activeTask.fileName}
                       className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-xs font-bold shadow-lg shadow-emerald-950/40 transition whitespace-nowrap"
                     >

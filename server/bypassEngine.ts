@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import path from 'path';
+import fs from 'fs';
 import type { Request, Response } from 'express';
 
 export interface BypassEngineInfo {
@@ -119,57 +120,183 @@ async function bypassTikTok(url: string, format: string): Promise<BypassResult |
   return null;
 }
 
-// 2. Local yt-dlp Android client bypass for YouTube & Universal sites
-function runYtDlpUrlExtractor(url: string, isAudio: boolean): Promise<string | null> {
+export interface YtDlpExtractionResult {
+  url: string;
+  title?: string;
+  thumbnail?: string;
+  ext?: string;
+  duration?: number;
+  format?: string;
+  fileSize?: number;
+}
+
+// Quick fallback extractor using -g directly
+function runYtDlpDirectUrl(url: string, isAudio: boolean): Promise<string | null> {
   return new Promise((resolve) => {
+    const ytDlpPath = path.resolve(process.cwd(), 'yt-dlp');
     const isYouTube = /(youtube\.com|youtu\.be)/i.test(url);
     const args = [
+      ytDlpPath,
+      '--js-runtimes', 'node',
+      '--no-warnings',
+      '--no-playlist',
+      '-g',
+    ];
+    if (isYouTube) {
+      args.push('--extractor-args', 'youtube:player_client=android,web');
+      args.push('-f', isAudio ? '140/ba[ext=m4a]/251/ba/b' : '22/18/best[ext=mp4]/b/best');
+    } else {
+      args.push('-f', isAudio ? 'ba[ext=m4a]/ba/b' : 'b[height<=1080]/b/best');
+    }
+    args.push(url);
+
+    const child = spawn('python3', args, { cwd: process.cwd(), timeout: 15000 });
+    let stdout = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.on('close', (code) => {
+      if (code === 0 && stdout.trim()) {
+        const firstLine = stdout.trim().split('\n').find(l => l.trim().startsWith('http'));
+        if (firstLine) {
+          resolve(firstLine.trim());
+          return;
+        }
+      }
+      resolve(null);
+    });
+    child.on('error', () => resolve(null));
+  });
+}
+
+// 2. High-Performance yt-dlp Native Extractor (Node JS Runtime + Android Player Client)
+function runYtDlpUrlExtractor(url: string, isAudio: boolean): Promise<YtDlpExtractionResult | null> {
+  return new Promise((resolve) => {
+    const isYouTube = /(youtube\.com|youtu\.be)/i.test(url);
+    const ytDlpPath = path.resolve(process.cwd(), 'yt-dlp');
+
+    // Ensure permissions
+    try {
+      if (fs.existsSync(ytDlpPath)) {
+        fs.chmodSync(ytDlpPath, 0o755);
+      }
+    } catch {}
+
+    const args = [
+      ytDlpPath,
       '--dump-json',
       '--no-warnings',
       '--no-playlist',
+      '--js-runtimes',
+      'node',
     ];
 
     if (isYouTube) {
-      args.push('--extractor-args', 'youtube:player_client=android');
-      // format 18 is 360p video+audio combined, b is best single stream
-      args.push('-f', isAudio ? 'ba/18/b' : '18/b/best');
+      args.push('--extractor-args', 'youtube:player_client=android,web');
+      if (isAudio) {
+        // Format 140 is AAC/M4A 128k audio, format 251 is Opus audio
+        args.push('-f', '140/ba[ext=m4a]/251/ba/b');
+      } else {
+        // 22 is 720p progressive MP4, 18 is 360p progressive MP4
+        args.push('-f', '22/18/best[ext=mp4]/b[ext=mp4]/b/best');
+      }
     } else {
-      args.push('-f', isAudio ? 'ba/b' : 'b/best[height<=1080]/best');
+      if (isAudio) {
+        args.push('-f', 'ba[ext=m4a]/ba/b/best');
+      } else {
+        args.push('-f', 'b[ext=mp4][height<=1080]/b[height<=1080]/b/best');
+      }
     }
 
     args.push(url);
 
-    const child = spawn('./yt-dlp', args, {
+    const child = spawn('python3', args, {
       cwd: process.cwd(),
-      timeout: 12000,
+      timeout: 22000,
     });
 
     let stdout = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
 
     child.on('close', (code) => {
-      if (code === 0 && stdout.trim()) {
+      if (stdout.trim()) {
         try {
-          const json = JSON.parse(stdout.trim());
-          if (json.url) {
-            resolve(json.url);
-            return;
+          // Robust JSON extraction
+          let json: any = null;
+          const lines = stdout.split('\n');
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+              try {
+                json = JSON.parse(trimmed);
+                break;
+              } catch {}
+            }
           }
-          if (json.formats && Array.isArray(json.formats)) {
-            const valid = json.formats.filter((f: any) => f.url && f.protocol?.startsWith('http'));
-            if (valid.length > 0) {
-              resolve(valid[valid.length - 1].url);
+          if (!json) {
+            json = JSON.parse(stdout.trim());
+          }
+
+          if (json) {
+            let streamUrl = json.url;
+
+            // If top-level url not directly given, inspect formats
+            if (!streamUrl && json.formats && Array.isArray(json.formats)) {
+              if (isAudio) {
+                const audioFormats = json.formats.filter((f: any) => 
+                  f.url && (f.acodec !== 'none' || f.vcodec === 'none') && f.protocol?.startsWith('http')
+                );
+                if (audioFormats.length > 0) {
+                  streamUrl = audioFormats[audioFormats.length - 1].url;
+                }
+              } else {
+                const progressiveFormats = json.formats.filter((f: any) => 
+                  f.url && f.vcodec !== 'none' && f.acodec !== 'none' && f.protocol?.startsWith('http')
+                );
+                if (progressiveFormats.length > 0) {
+                  streamUrl = progressiveFormats[progressiveFormats.length - 1].url;
+                } else {
+                  const anyVideo = json.formats.filter((f: any) => f.url && f.protocol?.startsWith('http'));
+                  if (anyVideo.length > 0) {
+                    streamUrl = anyVideo[anyVideo.length - 1].url;
+                  }
+                }
+              }
+            }
+
+            if (streamUrl) {
+              resolve({
+                url: streamUrl,
+                title: json.title,
+                thumbnail: json.thumbnail,
+                ext: json.ext || (isAudio ? 'mp3' : 'mp4'),
+                duration: json.duration,
+                format: json.format,
+                fileSize: json.filesize || json.filesize_approx,
+              });
               return;
             }
           }
-        } catch {
-          // parse failed
+        } catch (e: any) {
+          console.warn('JSON parsing of yt-dlp failed, trying direct url fallback:', e.message);
         }
       }
-      resolve(null);
+
+      // Fallback to quick -g flag if JSON parse failed
+      runYtDlpDirectUrl(url, isAudio)
+        .then((directUrl) => {
+          if (directUrl) {
+            resolve({
+              url: directUrl,
+              ext: isAudio ? 'mp3' : 'mp4',
+            });
+          } else {
+            resolve(null);
+          }
+        })
+        .catch(() => resolve(null));
     });
 
-    child.on('error', () => {
+    child.on('error', (err) => {
+      console.warn('yt-dlp child spawn error:', err.message);
       resolve(null);
     });
   });
@@ -246,35 +373,48 @@ export async function resolveBypassMedia(url: string, format: string): Promise<B
     } catch {}
   }
 
-  // Tier 2: TikTok No-Watermark Bypass
+  // Tier 2: TikTok No-Watermark Bypass (Instant via TikWM CDN)
   const tikTokResult = await bypassTikTok(url, format);
   if (tikTokResult) {
     return tikTokResult;
   }
 
-  // Tier 3: Cloud Converter Engine
+  // Tier 3: Native High-Speed Extractor (yt-dlp with Node JS runtime)
+  // RUN FIRST BEFORE SLOW/UNRELIABLE CLOUD CONVERTER QUEUES TO PREVENT 10% FREEZES
+  const isAudio = String(format).toLowerCase().includes('mp3') || 
+                  String(format).toLowerCase().includes('audio') || 
+                  String(format).toLowerCase().includes('m4a');
+  try {
+    const ytdlpMeta = await runYtDlpUrlExtractor(url, isAudio);
+    if (ytdlpMeta && ytdlpMeta.url) {
+      const ext = isAudio ? (ytdlpMeta.ext === 'm4a' ? 'm4a' : 'mp3') : (ytdlpMeta.ext || 'mp4');
+      const cleanTitle = (ytdlpMeta.title || 'media_download')
+        .replace(/[\\/:*?"<>|]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80) || 'media_download';
+      const filename = `${cleanTitle}.${ext}`;
+
+      return {
+        success: true,
+        engine: 'Native High-Speed Stream Bypass (yt-dlp)',
+        isDirect: true,
+        id: 'ytdlp_' + Date.now(),
+        downloadUrl: `/api/proxy-download?url=${encodeURIComponent(ytdlpMeta.url)}&originUrl=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}&isAudio=${isAudio}&stream=true`,
+        directUrl: ytdlpMeta.url,
+        title: ytdlpMeta.title || cleanTitle,
+        thumbnail: ytdlpMeta.thumbnail,
+        format: ext,
+      };
+    }
+  } catch (ytErr: any) {
+    console.warn('Native yt-dlp extractor error, attempting cloud fallback:', ytErr.message);
+  }
+
+  // Tier 4: Cloud Converter Engine as fallback
   const cloudResult = await bypassCloudConverter(url, format);
   if (cloudResult) {
     return cloudResult;
-  }
-
-  // Tier 4: Local Android Client / yt-dlp Native Extractor Bypass
-  const isAudio = String(format).toLowerCase().includes('mp3') || String(format).toLowerCase().includes('audio');
-  const directStreamUrl = await runYtDlpUrlExtractor(url, isAudio);
-
-  if (directStreamUrl) {
-    const ext = isAudio ? 'mp3' : 'mp4';
-    const filename = `media_download_${Date.now()}.${ext}`;
-    return {
-      success: true,
-      engine: 'Android Client Stream Bypass (yt-dlp)',
-      isDirect: true,
-      id: 'ytdlp_' + Date.now(),
-      downloadUrl: `/api/proxy-download?url=${encodeURIComponent(directStreamUrl)}&filename=${encodeURIComponent(filename)}&stream=true`,
-      directUrl: directStreamUrl,
-      title: 'Stream Media',
-      format: ext,
-    };
   }
 
   return {
@@ -284,13 +424,109 @@ export async function resolveBypassMedia(url: string, format: string): Promise<B
   };
 }
 
-// High-performance streaming proxy with Range support, User-Agent rotation, and CORS bypass
+// Direct stdout streaming with yt-dlp to bypass all 403 Forbidden and URL expiration errors
+export function streamYtDlpMedia(
+  url: string,
+  rawFilename: string,
+  isAudio: boolean,
+  req: Request,
+  res: Response
+) {
+  const cleanFilename = rawFilename ? rawFilename.replace(/["\r\n\\]/g, '_') : (isAudio ? 'audio.m4a' : 'video.mp4');
+  const ytDlpPath = path.resolve(process.cwd(), 'yt-dlp');
+
+  let contentType = isAudio ? 'audio/mp4' : 'video/mp4';
+  const lowerName = cleanFilename.toLowerCase();
+  if (lowerName.endsWith('.mp3')) {
+    contentType = 'audio/mpeg';
+  } else if (lowerName.endsWith('.m4a')) {
+    contentType = 'audio/mp4';
+  } else if (lowerName.endsWith('.mp4')) {
+    contentType = 'video/mp4';
+  } else if (lowerName.endsWith('.webm')) {
+    contentType = isAudio ? 'audio/webm' : 'video/webm';
+  }
+
+  const asciiSafe = cleanFilename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
+  const utf8Encoded = encodeURIComponent(cleanFilename);
+
+  res.status(200);
+  res.setHeader('Content-Type', contentType);
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${asciiSafe}"; filename*=UTF-8''${utf8Encoded}`
+  );
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Accept-Ranges');
+  res.setHeader('Accept-Ranges', 'none');
+
+  const args = [
+    ytDlpPath,
+    '--no-warnings',
+    '--no-playlist',
+    '--js-runtimes', 'node',
+  ];
+
+  const isYouTube = /(youtube\.com|youtu\.be)/i.test(url);
+  if (isYouTube) {
+    args.push('--extractor-args', 'youtube:player_client=android,web');
+    if (isAudio) {
+      args.push('-f', '140/ba[ext=m4a]/251/ba/b');
+    } else {
+      args.push('-f', '22/18/best[ext=mp4]/b[ext=mp4]/b/best');
+    }
+  } else {
+    if (isAudio) {
+      args.push('-f', 'ba[ext=m4a]/ba/b/best');
+    } else {
+      args.push('-f', 'b[height<=1080]/b/best');
+    }
+  }
+
+  args.push('-o', '-', url);
+
+  const child = spawn('python3', args, { cwd: process.cwd() });
+
+  req.on('close', () => {
+    try {
+      child.kill('SIGKILL');
+    } catch {}
+  });
+
+  child.stdout.on('error', (err) => {
+    console.warn('yt-dlp stream pipe error:', err.message);
+  });
+
+  child.stderr.on('data', (d) => {
+    const msg = d.toString();
+    if (msg.includes('ERROR:')) {
+      console.warn('yt-dlp stream error:', msg.trim());
+    }
+  });
+
+  child.stdout.pipe(res);
+}
+
+// High-performance streaming proxy with Range support, User-Agent rotation, RFC 6266 headers, and CORS bypass
 export async function proxyStreamMedia(targetUrl: string, rawFilename: string, req: Request, res: Response) {
   if (!targetUrl) {
     return res.status(400).send('Missing url parameter');
   }
 
   const cleanFilename = rawFilename ? rawFilename.replace(/["\r\n\\]/g, '_') : 'download_media';
+  const originUrl = req.query.originUrl as string;
+  const isAudio = Boolean(
+    req.query.isAudio === 'true' ||
+    req.query.type === 'audio' ||
+    cleanFilename.toLowerCase().endsWith('.mp3') ||
+    cleanFilename.toLowerCase().endsWith('.m4a')
+  );
+
+  // Check if targetUrl is actually an original webpage URL (e.g. YouTube watch URL or social link)
+  const isOriginalWebUrl = /(youtube\.com\/watch|youtu\.be\/|tiktok\.com\/|facebook\.com\/|fb\.watch\/|instagram\.com\/)/i.test(targetUrl);
+  if (isOriginalWebUrl) {
+    return streamYtDlpMedia(targetUrl, cleanFilename, isAudio, req, res);
+  }
 
   // Determine appropriate referer based on target URL
   let referer = 'https://www.google.com/';
@@ -341,25 +577,49 @@ export async function proxyStreamMedia(targetUrl: string, rawFilename: string, r
     });
 
     // Connection and response headers received successfully:
-    // Clear the connect timeout so the media body stream can flow without time limit!
     clearTimeout(connectTimer);
 
     if (!upstream.ok && upstream.status !== 206) {
-      // If upstream failed or returned non-200/206, fallback to direct 302 redirect
+      console.warn(`Upstream returned ${upstream.status} for ${targetUrl.slice(0, 80)}, checking fallback...`);
+      // If direct CDN stream failed (e.g. 403 Forbidden or expired) and we have originUrl, fallback to direct yt-dlp stream!
+      if (originUrl) {
+        return streamYtDlpMedia(originUrl, cleanFilename, isAudio, req, res);
+      }
       if (!res.headersSent) {
-        return res.redirect(302, targetUrl);
+        return res.status(upstream.status || 502).send('Upstream media stream unavailable');
       }
       return res.end();
     }
 
     const status = upstream.status === 206 ? 206 : 200;
-    const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+
+    // Determine correct Content-Type from extension or upstream
+    let contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+    const lowerName = cleanFilename.toLowerCase();
+    if (lowerName.endsWith('.mp3')) {
+      contentType = 'audio/mpeg';
+    } else if (lowerName.endsWith('.m4a')) {
+      contentType = 'audio/mp4';
+    } else if (lowerName.endsWith('.mp4')) {
+      contentType = 'video/mp4';
+    } else if (lowerName.endsWith('.webm')) {
+      contentType = isAudio ? 'audio/webm' : 'video/webm';
+    }
+
     const contentLength = upstream.headers.get('content-length');
     const contentRange = upstream.headers.get('content-range');
 
     res.status(status);
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(cleanFilename)}"`);
+
+    // RFC 6266 / RFC 5987 compliant Content-Disposition: ASCII fallback + UTF-8 encoded filename
+    const asciiSafeFilename = cleanFilename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
+    const utf8EncodedFilename = encodeURIComponent(cleanFilename);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiSafeFilename}"; filename*=UTF-8''${utf8EncodedFilename}`
+    );
+
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Content-Disposition, Accept-Ranges');
     res.setHeader('Accept-Ranges', 'bytes');
@@ -377,14 +637,13 @@ export async function proxyStreamMedia(targetUrl: string, rawFilename: string, r
       const nodeStream = Readable.fromWeb(upstream.body);
 
       nodeStream.on('error', (err: any) => {
-        // Suppress expected aborts when client disconnects or pauses
         if (err.name === 'AbortError' || controller.signal.aborted || req.destroyed) {
           return;
         }
         console.warn('Stream proxy pipe error:', err.message);
         if (!res.headersSent) {
           try {
-            res.redirect(302, targetUrl);
+            res.status(502).send('Streaming interrupted');
           } catch {}
         } else {
           try {
@@ -402,7 +661,10 @@ export async function proxyStreamMedia(targetUrl: string, rawFilename: string, r
       nodeStream.pipe(res);
     } else {
       if (!res.headersSent) {
-        res.redirect(302, targetUrl);
+        if (originUrl) {
+          return streamYtDlpMedia(originUrl, cleanFilename, isAudio, req, res);
+        }
+        res.status(502).send('Empty upstream body');
       }
     }
   } catch (err: any) {
@@ -410,9 +672,13 @@ export async function proxyStreamMedia(targetUrl: string, rawFilename: string, r
     if (err.name !== 'AbortError' && !controller.signal.aborted && !req.destroyed) {
       console.error('Proxy stream exception:', err.message);
     }
+    // If upstream fetch threw and we have originUrl, fallback to direct yt-dlp stream!
+    if (originUrl && !res.headersSent) {
+      return streamYtDlpMedia(originUrl, cleanFilename, isAudio, req, res);
+    }
     if (!res.headersSent) {
       try {
-        res.redirect(302, targetUrl);
+        res.status(502).send('Streaming connection failed');
       } catch {}
     } else {
       try {

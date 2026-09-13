@@ -1,6 +1,7 @@
 import confetti from 'canvas-confetti';
 import { DownloadTask, MediaFormat, VideoMetadata } from '../types';
 import { notificationManager } from './notificationManager';
+import { storagePreferenceManager } from './storagePreferenceManager';
 
 const STORAGE_KEY = 'video_downloader_history_v1';
 
@@ -30,25 +31,22 @@ export function saveDownloadHistory(history: DownloadTask[]): void {
   }
 }
 
-// Trigger real browser download to Downloads folder
+// Trigger real browser download or save directly to SD Card / Phone memory
 export function triggerBrowserDownload(fileName: string, targetUrl: string): void {
   try {
-    const link = document.createElement('a');
-    link.href = targetUrl;
-    link.download = fileName;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    document.body.appendChild(link);
-    link.click();
-    setTimeout(() => {
-      if (document.body.contains(link)) {
-        document.body.removeChild(link);
-      }
-    }, 2500);
+    const config = storagePreferenceManager.getConfig();
+    if (config.destination === 'sd_card' || config.destination === 'ask_each_time') {
+      storagePreferenceManager.saveFileToUserStorage(fileName, targetUrl).catch((err) => {
+        console.warn('Direct storage save notice:', err);
+      });
+      return;
+    }
   } catch (e) {
-    console.warn('Direct trigger download warning, opening in tab:', e);
-    window.open(targetUrl, '_blank');
+    console.warn('Storage preference check notice, proceeding with direct download:', e);
   }
+
+  // Standard browser download
+  storagePreferenceManager.fallbackBrowserDownload(fileName, targetUrl);
 }
 
 // Sanitize filename for safe OS saving
@@ -167,18 +165,46 @@ export function startDownloadSimulation(
 
       notificationManager.notifyDownloadStarted(fileName);
       task.status = 'extracting';
-      task.progress = 10;
-      task.eta = 'Connecting to target media stream...';
+      task.progress = 12;
+      task.eta = 'Connecting to media stream...';
       task.speed = 'Initiating...';
       onProgress({ ...task });
 
+      // Progressive extraction updates to prevent any frozen progress perception
+      let currentExtractProgress = 12;
+      const extractionMessages = [
+        'Connecting to streaming nodes...',
+        'Resolving media stream headers...',
+        'Bypassing upstream rate-limits...',
+        'Preparing direct high-speed pipeline...',
+      ];
+      let msgIdx = 0;
+
+      const extractInterval = setInterval(() => {
+        if (isCancelled || task.status !== 'extracting') {
+          clearInterval(extractInterval);
+          return;
+        }
+        currentExtractProgress = Math.min(48, currentExtractProgress + 4);
+        msgIdx = (msgIdx + 1) % extractionMessages.length;
+        task.progress = currentExtractProgress;
+        task.eta = extractionMessages[msgIdx];
+        task.speed = 'Active';
+        onProgress({ ...task });
+      }, 700);
+
       const apiFmt = getApiFormat(format);
-      const startResp = await fetch('/api/convert/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: video.originalUrl, format: apiFmt }),
-        signal: AbortSignal.timeout(15000),
-      });
+      let startResp: globalThis.Response;
+      try {
+        startResp = await fetch('/api/convert/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: video.originalUrl, format: apiFmt }),
+          signal: AbortSignal.timeout(35000),
+        });
+      } finally {
+        clearInterval(extractInterval);
+      }
 
       if (!startResp.ok) {
         throw new Error(`Server returned HTTP ${startResp.status}`);
@@ -189,38 +215,50 @@ export function startDownloadSimulation(
         throw new Error(startData.error || 'Could not process target link');
       }
 
-      task.engine = startData.engine || 'Bypass Engine Pro';
+      task.engine = startData.engine || 'Native Stream Bypass';
 
-      // Check if target is a direct media file (instant stream)
+      // Direct media file or native yt-dlp direct stream (Instant & Reliable)
       if (startData.isDirect && startData.downloadUrl) {
         task.status = 'downloading';
         task.progress = 60;
-        task.speed = '5.4 MB/s';
+        task.speed = '8.4 MB/s';
         task.eta = '1s';
+        task.fileBlobUrl = startData.downloadUrl;
+        task.directUrl = startData.directUrl || video.originalUrl;
+        task.downloadedBytes = Math.round(totalBytes * 0.6);
+        task.downloadedSize = `${(task.downloadedBytes / (1024 * 1024)).toFixed(1)} MB`;
         onProgress({ ...task });
 
         setTimeout(() => {
           if (isCancelled) return;
-          task.status = 'completed';
-          task.progress = 100;
-          task.speed = 'Finished';
-          task.eta = '0s';
-          task.downloadedBytes = totalBytes;
-          task.downloadedSize = task.totalSize;
-          task.fileBlobUrl = startData.downloadUrl;
-          task.directUrl = startData.directUrl || video.originalUrl;
+          task.progress = 85;
+          task.eta = 'Finalizing...';
+          task.downloadedBytes = Math.round(totalBytes * 0.85);
+          task.downloadedSize = `${(task.downloadedBytes / (1024 * 1024)).toFixed(1)} MB`;
+          onProgress({ ...task });
 
-          try {
-            confetti({
-              particleCount: 80,
-              spread: 60,
-              origin: { y: 0.8 },
-            });
-          } catch {}
+          setTimeout(() => {
+            if (isCancelled) return;
+            task.status = 'completed';
+            task.progress = 100;
+            task.speed = 'Finished';
+            task.eta = '0s';
+            task.downloadedBytes = totalBytes;
+            task.downloadedSize = task.totalSize;
 
-          triggerBrowserDownload(fileName, startData.downloadUrl);
-          onComplete({ ...task });
-        }, 800);
+            try {
+              confetti({
+                particleCount: 80,
+                spread: 60,
+                origin: { y: 0.8 },
+              });
+            } catch {}
+
+            triggerBrowserDownload(fileName, startData.downloadUrl);
+            notificationManager.notifyDownloadComplete(fileName, format.quality);
+            onComplete({ ...task });
+          }, 350);
+        }, 350);
         return;
       }
 
@@ -232,13 +270,13 @@ export function startDownloadSimulation(
       }
 
       task.status = 'converting';
-      task.progress = 25;
+      task.progress = 30;
       task.eta = 'Encoding target media stream...';
-      task.speed = '3.5 MB/s';
+      task.speed = '4.5 MB/s';
       onProgress({ ...task });
 
       let attempts = 0;
-      const maxAttempts = 60; // Up to 90 seconds polling for HD target streams
+      const maxAttempts = 50; // Up to 75 seconds polling
 
       pollingInterval = setInterval(async () => {
         if (isCancelled) {
@@ -287,11 +325,11 @@ export function startDownloadSimulation(
             } else {
               // In progress for target video
               const rawProgress = pData.progress || 0;
-              // Map progress smoothly: 25% -> 96%
-              const mapped = Math.min(96, Math.max(25, Math.round(25 + (rawProgress / 1000) * 70)));
+              // Map progress smoothly: 30% -> 96%, factoring in elapsed attempts so it never freezes
+              const mapped = Math.min(96, Math.max(30, Math.round(30 + (rawProgress / 1000) * 60 + Math.min(20, attempts * 0.8))));
               task.progress = Math.max(task.progress, mapped);
               task.status = 'downloading';
-              task.speed = `${(3.2 + Math.random() * 2.0).toFixed(1)} MB/s`;
+              task.speed = `${(3.8 + Math.random() * 2.5).toFixed(1)} MB/s`;
               task.eta = `${Math.max(2, Math.round((maxAttempts - attempts) * 1.5))}s`;
               task.downloadedBytes = Math.round(totalBytes * (task.progress / 100));
               task.downloadedSize = `${(task.downloadedBytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -305,7 +343,7 @@ export function startDownloadSimulation(
         if (attempts >= maxAttempts) {
           clearInterval(pollingInterval);
           task.status = 'failed';
-          task.error = 'টার্গেট লিঙ্ক প্রসেস হতে বেশি সময় নিয়েছে। অনুগ্রহ করে অটো-রিট্রাই বাটনে ক্লিক করুন। (Target conversion timed out, click Auto-Retry to try again)';
+          task.error = 'টার্গেট লিঙ্ক প্রসেস হতে অতিরিক্ত সময় লেগেছে। পুনরায় চেষ্টা করুন বা সরাসরি বাইপাস ফরম্যাট বেছে নিন।';
           task.eta = 'Timed out';
           onProgress({ ...task });
           onError(taskId, task.error);

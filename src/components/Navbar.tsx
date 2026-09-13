@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { AppTab, Language } from '../types';
+import React, { useState, useEffect } from 'react';
+import { AppTab, Language, StorageConfig } from '../types';
 import { getTranslation } from '../utils/translations';
 import { usePWA } from '../hooks/usePWA';
+import { storagePreferenceManager } from '../services/storagePreferenceManager';
 import { 
   Download, 
   History, 
@@ -11,7 +12,8 @@ import {
   Share2, 
   Check, 
   HelpCircle,
-  Layers
+  Layers,
+  HardDrive
 } from 'lucide-react';
 
 interface Props {
@@ -21,6 +23,7 @@ interface Props {
   setLanguage: (lang: Language) => void;
   historyCount: number;
   onOpenBypassModal?: () => void;
+  onOpenStorageModal?: () => void;
 }
 
 export const Navbar: React.FC<Props> = ({
@@ -30,11 +33,17 @@ export const Navbar: React.FC<Props> = ({
   setLanguage,
   historyCount,
   onOpenBypassModal,
+  onOpenStorageModal,
 }) => {
   const t = getTranslation(language);
   const { isInstallable, isInstalled, isIOS, install } = usePWA();
   const [showIOSModal, setShowIOSModal] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [storageConfig, setStorageConfig] = useState<StorageConfig>(storagePreferenceManager.getConfig());
+
+  useEffect(() => {
+    return storagePreferenceManager.subscribe((c) => setStorageConfig(c));
+  }, []);
 
   const handleShare = async () => {
     if (navigator.share) {
@@ -156,7 +165,40 @@ export const Navbar: React.FC<Props> = ({
         </nav>
 
         {/* Action Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Quick Shortcut Download Trigger Button */}
+          <button
+            id="navbar-quick-shortcut-btn"
+            onClick={() => {
+              const fab = document.getElementById('shortcut-floating-fab-btn');
+              if (fab) fab.click();
+            }}
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-rose-500 to-pink-600 text-white hover:from-rose-600 hover:to-pink-700 transition shadow-md shadow-rose-950/40 active:scale-95"
+            title="Open Shortcut Downloader (Alt + D)"
+          >
+            <Download className="w-3.5 h-3.5 animate-pulse" />
+            <span className="hidden md:inline">{language === 'bn' ? 'শর্টকাট ডাউনলোড' : 'Quick Download'}</span>
+            <span className="md:hidden">{language === 'bn' ? 'শর্টকাট' : 'Quick'}</span>
+          </button>
+
+          {/* Storage Destination Button (SD Card / Phone Memory) */}
+          <button
+            id="storage-location-btn"
+            onClick={onOpenStorageModal}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 hover:text-white transition shadow-sm"
+            title="Configure SD Card / Phone Storage"
+          >
+            <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">
+              {storageConfig.destination === 'sd_card'
+                ? (language === 'bn' ? 'মেমোরি কার্ড' : 'SD Card')
+                : storageConfig.destination === 'phone_memory'
+                ? (language === 'bn' ? 'ফোন মেমোরি' : 'Phone Mem')
+                : (language === 'bn' ? 'স্টোরেজ' : 'Storage')}
+            </span>
+            <span className="sm:hidden">{language === 'bn' ? 'SD কার্ড' : 'SD'}</span>
+          </button>
+
           {/* Bypass API Status Button */}
           <button
             id="bypass-api-btn"
