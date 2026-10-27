@@ -85,7 +85,23 @@ export interface BatchQueueItem {
   taskId?: string;
 }
 
-export type AppTab = 'downloader' | 'batch' | 'history' | 'blueprint' | 'pwa-guide' | 'settings';
+export interface YouTubeSongTrack {
+  id: string;
+  title: string;
+  artist: string;
+  channelTitle?: string;
+  duration: string;
+  durationSeconds: number;
+  views: string;
+  published: string;
+  thumbnail: string;
+  albumArt: string;
+  url: string;
+  type: 'song' | 'album' | 'video';
+  isOfficial?: boolean;
+}
+
+export type AppTab = 'downloader' | 'music' | 'batch' | 'history' | 'blueprint' | 'pwa-guide' | 'settings';
 export type Language = 'bn' | 'en';
 
 export type StorageDestination = 'sd_card' | 'phone_memory' | 'ask_each_time' | 'browser_default';

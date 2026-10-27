@@ -131,8 +131,8 @@ export const MobilePersistenceBar: React.FC<Props> = ({ onOpenStorageModal }) =>
                     {isOnline ? 'অনলাইন' : 'অফলাইন'}
                   </span>
                 </div>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  মিনিমাইজ বা স্ক্রিন অফ করলেও ব্যাকগ্রাউন্ডে ডাউনলোড সচল থাকে ও রিয়েল-টাইমে পুশ নোটিফিকেশন পাঠায়।
+                <p className="text-xs text-slate-300 mt-0.5">
+                  🔒 স্থান পরিবর্তন, মিনিমাইজ বা ফোন স্ক্রিন লক করলেও ব্যাকগ্রাউন্ডে ডাউনলোড সচল থাকে এবং লক-স্ক্রিনে লাইভ অ্যালবাম ও নোটিফিকেশন প্রদর্শন করে।
                 </p>
               </div>
             </div>

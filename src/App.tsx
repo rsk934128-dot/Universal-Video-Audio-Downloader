@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { AppTab, DownloadTask, Language, MediaFormat, VideoMetadata } from './types';
+import { AppTab, DownloadTask, Language, MediaFormat, VideoMetadata, YouTubeSongTrack } from './types';
 import { Navbar } from './components/Navbar';
 import { DownloaderView } from './components/DownloaderView';
 import { DownloadHistoryView } from './components/DownloadHistoryView';
@@ -15,7 +15,11 @@ import { ActiveDownloadBar } from './components/ActiveDownloadBar';
 import { BypassEngineStatusModal } from './components/BypassEngineStatusModal';
 import { MobilePersistenceBar } from './components/MobilePersistenceBar';
 import { StorageLocationModal } from './components/StorageLocationModal';
+import { AndroidReleaseModal } from './components/AndroidReleaseModal';
+import { AndroidPermissionLoginModal } from './components/AndroidPermissionLoginModal';
 import { FloatingShortcutDownloadButton } from './components/FloatingShortcutDownloadButton';
+import { YouTubeMusicView } from './components/YouTubeMusicView';
+import { MusicPlayerBar } from './components/MusicPlayerBar';
 import { 
   extractUrlFromText, 
   extractVideoInfo 
@@ -25,9 +29,15 @@ import {
   saveDownloadHistory, 
   startDownloadSimulation 
 } from './services/downloadManager';
+import { 
+  onAuthChange, 
+  syncDownloadToCloud 
+} from './services/firebaseAuth';
+import type { User } from 'firebase/auth';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('downloader');
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [language, setLanguage] = useState<Language>('bn');
   const [inputUrl, setInputUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -42,11 +52,26 @@ export default function App() {
   const [history, setHistory] = useState<DownloadTask[]>([]);
   const [isBypassModalOpen, setIsBypassModalOpen] = useState<boolean>(false);
   const [isStorageModalOpen, setIsStorageModalOpen] = useState<boolean>(false);
+  const [isAndroidReleaseModalOpen, setIsAndroidReleaseModalOpen] = useState<boolean>(false);
+  const [isAndroidPermissionModalOpen, setIsAndroidPermissionModalOpen] = useState<boolean>(false);
+
+  // YouTube Music & Album Player states
+  const [playingTrack, setPlayingTrack] = useState<YouTubeSongTrack | null>(null);
+  const [isPlayingSong, setIsPlayingSong] = useState<boolean>(false);
+  const [activePlaylist, setActivePlaylist] = useState<YouTubeSongTrack[]>([]);
 
   // 1. Initialize history from localStorage
   useEffect(() => {
     const saved = loadDownloadHistory();
     setHistory(saved);
+  }, []);
+
+  // 1b. Listen to Google Auth State
+  useEffect(() => {
+    const unsubscribe = onAuthChange((user) => {
+      setCurrentUser(user);
+    });
+    return () => unsubscribe();
   }, []);
 
   // 2. Check for Web Share Target query params (?url=... or ?text=...)
@@ -117,6 +142,11 @@ export default function App() {
           saveDownloadHistory(updated);
           return updated;
         });
+
+        // Sync to Firebase Cloud if logged in with Google
+        if (currentUser) {
+          syncDownloadToCloud(currentUser.uid, completedTask);
+        }
       },
       // onError
       (taskId, errorMsg) => {
@@ -136,7 +166,7 @@ export default function App() {
     );
 
     setCancelFn(() => cancel);
-  }, [video]);
+  }, [video, currentUser]);
 
   // Handle instant analyze & auto-download from floating shortcut button
   const handleAnalyzeAndDownload = useCallback(async (targetUrl: string, autoStartFormat?: 'video' | 'audio') => {
@@ -173,6 +203,9 @@ export default function App() {
                 saveDownloadHistory(updated);
                 return updated;
               });
+              if (currentUser) {
+                syncDownloadToCloud(currentUser.uid, completedTask);
+              }
             },
             (taskId, errorMsg) => {
               setActiveFormatId(null);
@@ -197,7 +230,7 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [language]);
+  }, [language, currentUser]);
 
   // Handle Auto-Retry from download history
   const handleRetryHistoryItem = useCallback((item: DownloadTask) => {
@@ -300,6 +333,18 @@ export default function App() {
     executeAnalyze(testUrl);
   }, [executeAnalyze]);
 
+  // Handle cloud sync loaded from Google account
+  const handleCloudSyncLoaded = useCallback((cloudTasks: DownloadTask[]) => {
+    setHistory((prev) => {
+      const existingIds = new Set(prev.map(item => item.id));
+      const newItems = cloudTasks.filter(item => !existingIds.has(item.id));
+      if (newItems.length === 0) return prev;
+      const updated = [...newItems, ...prev];
+      saveDownloadHistory(updated);
+      return updated;
+    });
+  }, []);
+
   // Handle batch task completion (auto save to download history)
   const handleBatchTaskCompleted = useCallback((task: DownloadTask) => {
     setHistory(prev => {
@@ -307,10 +352,182 @@ export default function App() {
       saveDownloadHistory(updated);
       return updated;
     });
+    if (currentUser) {
+      syncDownloadToCloud(currentUser.uid, task);
+    }
+  }, [currentUser]);
+
+  // Handle Play Song with Album Player
+  const handlePlaySong = useCallback((track: YouTubeSongTrack, playlist?: YouTubeSongTrack[]) => {
+    setPlayingTrack(track);
+    setIsPlayingSong(true);
+    if (playlist && playlist.length > 0) {
+      setActivePlaylist(playlist);
+    }
   }, []);
 
+  const handleNextSong = useCallback(() => {
+    if (!playingTrack || activePlaylist.length === 0) return;
+    const currentIndex = activePlaylist.findIndex((t) => t.id === playingTrack.id);
+    if (currentIndex !== -1 && currentIndex < activePlaylist.length - 1) {
+      setPlayingTrack(activePlaylist[currentIndex + 1]);
+      setIsPlayingSong(true);
+    } else if (activePlaylist.length > 0) {
+      setPlayingTrack(activePlaylist[0]);
+      setIsPlayingSong(true);
+    }
+  }, [playingTrack, activePlaylist]);
+
+  const handlePrevSong = useCallback(() => {
+    if (!playingTrack || activePlaylist.length === 0) return;
+    const currentIndex = activePlaylist.findIndex((t) => t.id === playingTrack.id);
+    if (currentIndex > 0) {
+      setPlayingTrack(activePlaylist[currentIndex - 1]);
+      setIsPlayingSong(true);
+    } else if (activePlaylist.length > 0) {
+      setPlayingTrack(activePlaylist[activePlaylist.length - 1]);
+      setIsPlayingSong(true);
+    }
+  }, [playingTrack, activePlaylist]);
+
+  // Handle 1-Click YouTube Song Audio (MP3 320k) Download
+  const handleDownloadYouTubeAudio = useCallback((track: YouTubeSongTrack) => {
+    const audioFormat: MediaFormat = {
+      id: 'audio-mp3-320',
+      type: 'audio',
+      label: 'MP3 320 kbps',
+      subLabel: 'Ultra HD Audio (সেরা অডিও)',
+      ext: 'mp3',
+      quality: '320kbps High Quality',
+      bitrate: '320 kbps',
+      estimatedSize: `${Math.max(4.2, ((track.durationSeconds || 210) * 0.04)).toFixed(1)} MB`,
+      codec: 'MPEG-1 Layer 3 (MP3)',
+      badge: 'Crystal Audio',
+      isRecommended: true,
+    };
+
+    const videoMeta: VideoMetadata = {
+      id: track.id,
+      originalUrl: track.url,
+      platform: 'youtube',
+      title: track.title,
+      author: track.artist,
+      thumbnail: track.albumArt || track.thumbnail,
+      duration: track.duration,
+      durationSeconds: track.durationSeconds,
+      viewCount: track.views,
+      uploadDate: track.published || 'Recent',
+      formats: [audioFormat],
+    };
+
+    setVideo(videoMeta);
+    setActiveFormatId(audioFormat.id);
+
+    const { cancel } = startDownloadSimulation(
+      videoMeta,
+      audioFormat,
+      (task) => setActiveTask(task),
+      (completedTask) => {
+        setActiveTask(completedTask);
+        setActiveFormatId(null);
+        setCancelFn(null);
+        setHistory((prev) => {
+          const updated = [completedTask, ...prev.filter(i => i.id !== completedTask.id)];
+          saveDownloadHistory(updated);
+          return updated;
+        });
+        if (currentUser) {
+          syncDownloadToCloud(currentUser.uid, completedTask);
+        }
+      },
+      (taskId, errorMsg) => {
+        setActiveFormatId(null);
+        setCancelFn(null);
+        setActiveTask((prev) => {
+          if (!prev) return null;
+          const failedTask: DownloadTask = { ...prev, status: 'failed', error: errorMsg };
+          setHistory((h) => {
+            const updated = [failedTask, ...h.filter(i => i.id !== failedTask.id)];
+            saveDownloadHistory(updated);
+            return updated;
+          });
+          return failedTask;
+        });
+      }
+    );
+    setCancelFn(() => cancel);
+  }, [currentUser]);
+
+  // Handle 1-Click YouTube Song Video (HD MP4) Download
+  const handleDownloadYouTubeVideo = useCallback((track: YouTubeSongTrack) => {
+    const videoFormat: MediaFormat = {
+      id: 'video-mp4-720p',
+      type: 'video',
+      label: '720p HD',
+      subLabel: '1280x720 High Definition',
+      ext: 'mp4',
+      quality: '720p HD',
+      resolution: '1280x720',
+      estimatedSize: `${Math.max(16.5, ((track.durationSeconds || 210) * 0.18)).toFixed(1)} MB`,
+      codec: 'H.264 / AVC + AAC Stereo',
+      badge: 'Fast HD',
+      isRecommended: true,
+    };
+
+    const videoMeta: VideoMetadata = {
+      id: track.id,
+      originalUrl: track.url,
+      platform: 'youtube',
+      title: track.title,
+      author: track.artist,
+      thumbnail: track.albumArt || track.thumbnail,
+      duration: track.duration,
+      durationSeconds: track.durationSeconds,
+      viewCount: track.views,
+      uploadDate: track.published || 'Recent',
+      formats: [videoFormat],
+    };
+
+    setVideo(videoMeta);
+    setActiveFormatId(videoFormat.id);
+
+    const { cancel } = startDownloadSimulation(
+      videoMeta,
+      videoFormat,
+      (task) => setActiveTask(task),
+      (completedTask) => {
+        setActiveTask(completedTask);
+        setActiveFormatId(null);
+        setCancelFn(null);
+        setHistory((prev) => {
+          const updated = [completedTask, ...prev.filter(i => i.id !== completedTask.id)];
+          saveDownloadHistory(updated);
+          return updated;
+        });
+        if (currentUser) {
+          syncDownloadToCloud(currentUser.uid, completedTask);
+        }
+      },
+      (taskId, errorMsg) => {
+        setActiveFormatId(null);
+        setCancelFn(null);
+        setActiveTask((prev) => {
+          if (!prev) return null;
+          const failedTask: DownloadTask = { ...prev, status: 'failed', error: errorMsg };
+          setHistory((h) => {
+            const updated = [failedTask, ...h.filter(i => i.id !== failedTask.id)];
+            saveDownloadHistory(updated);
+            return updated;
+          });
+          return failedTask;
+        });
+      }
+    );
+    setCancelFn(() => cancel);
+  }, [currentUser]);
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white overflow-x-hidden w-full max-w-full">
       {/* Top Navigation Bar */}
       <Navbar
         activeTab={activeTab}
@@ -320,6 +537,9 @@ export default function App() {
         historyCount={history.length}
         onOpenBypassModal={() => setIsBypassModalOpen(true)}
         onOpenStorageModal={() => setIsStorageModalOpen(true)}
+        onOpenAndroidReleaseModal={() => setIsAndroidReleaseModalOpen(true)}
+        onOpenAndroidPermissionModal={() => setIsAndroidPermissionModalOpen(true)}
+        onCloudSyncLoaded={handleCloudSyncLoaded}
       />
 
       {/* Main Content Area */}
@@ -347,6 +567,23 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'music' && (
+          <YouTubeMusicView
+            language={language}
+            onPlaySong={handlePlaySong}
+            onDownloadAudio={handleDownloadYouTubeAudio}
+            onDownloadVideo={handleDownloadYouTubeVideo}
+            onSendToDownloader={(url) => {
+              setInputUrl(url);
+              setActiveTab('downloader');
+              executeAnalyze(url);
+            }}
+            onAddToBatch={(url) => {
+              setActiveTab('batch');
+            }}
+          />
+        )}
+
         {activeTab === 'batch' && (
           <BatchDownloaderView
             language={language}
@@ -370,6 +607,7 @@ export default function App() {
             onImportHistory={handleImportHistory}
             onBackToDownloader={() => setActiveTab('downloader')}
             language={language}
+            currentUser={currentUser}
           />
         )}
 
@@ -402,6 +640,23 @@ export default function App() {
         language={language}
       />
 
+      {/* Floating Bottom Music & Album Player Bar */}
+      {playingTrack && (
+        <MusicPlayerBar
+          track={playingTrack}
+          isPlaying={isPlayingSong}
+          onPlayPause={() => setIsPlayingSong(!isPlayingSong)}
+          onClose={() => {
+            setIsPlayingSong(false);
+            setPlayingTrack(null);
+          }}
+          onDownloadAudio={handleDownloadYouTubeAudio}
+          onDownloadVideo={handleDownloadYouTubeVideo}
+          onNext={handleNextSong}
+          onPrev={handlePrevSong}
+        />
+      )}
+
       {/* Bypass API Engine Status Modal */}
       <BypassEngineStatusModal
         isOpen={isBypassModalOpen}
@@ -414,6 +669,22 @@ export default function App() {
         isOpen={isStorageModalOpen}
         onClose={() => setIsStorageModalOpen(false)}
         language={language}
+      />
+
+      {/* Android APK GitHub Release Modal */}
+      <AndroidReleaseModal
+        isOpen={isAndroidReleaseModalOpen}
+        onClose={() => setIsAndroidReleaseModalOpen(false)}
+        language={language}
+      />
+
+      {/* Android Device Permissions & Seamless Login Modal */}
+      <AndroidPermissionLoginModal
+        isOpen={isAndroidPermissionModalOpen}
+        onClose={() => setIsAndroidPermissionModalOpen(false)}
+        language={language}
+        onCloudSyncLoaded={handleCloudSyncLoaded}
+        onOpenStorageModal={() => setIsStorageModalOpen(true)}
       />
 
       {/* Always Visible Floating Shortcut Download Button */}
@@ -436,6 +707,20 @@ export default function App() {
               : 'Universal Video & Audio Downloader Engine • yt-dlp & Web Share Target Architecture'}
           </p>
           <div className="flex items-center gap-4 text-slate-400 flex-wrap justify-center">
+            <button 
+              onClick={() => setIsAndroidPermissionModalOpen(true)}
+              className="hover:text-emerald-300 text-emerald-400 font-semibold transition flex items-center gap-1"
+            >
+              <span>{language === 'bn' ? '🛡️ অ্যান্ড্রয়েড পারমিশন ও সাইন-ইন' : '🛡️ Android Permissions & Login'}</span>
+            </button>
+            <span>•</span>
+            <button 
+              onClick={() => setIsAndroidReleaseModalOpen(true)}
+              className="hover:text-emerald-300 text-sky-400 font-medium transition flex items-center gap-1"
+            >
+              <span>{language === 'bn' ? '📱 অ্যান্ড্রয়েড APK রিলিজ' : '📱 Android APK Release'}</span>
+            </button>
+            <span>•</span>
             <button 
               onClick={() => setIsStorageModalOpen(true)}
               className="hover:text-white text-emerald-400 font-medium transition flex items-center gap-1"

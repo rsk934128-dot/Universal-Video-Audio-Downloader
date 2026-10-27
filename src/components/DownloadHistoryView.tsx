@@ -38,6 +38,7 @@ interface Props {
   onImportHistory?: (updatedHistory: DownloadTask[], count: number, mode: 'merge' | 'replace') => void;
   onBackToDownloader: () => void;
   language: Language;
+  currentUser?: any;
 }
 
 export const DownloadHistoryView: React.FC<Props> = ({
@@ -48,6 +49,7 @@ export const DownloadHistoryView: React.FC<Props> = ({
   onImportHistory,
   onBackToDownloader,
   language,
+  currentUser,
 }) => {
   const t = getTranslation(language);
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -209,6 +211,21 @@ export const DownloadHistoryView: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      {/* Google Cloud Sync Status Card */}
+      {currentUser && (
+        <div className="mb-5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-slate-900 to-sky-950/30 border border-emerald-500/30 flex items-center justify-between text-xs shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-emerald-300 font-medium">
+              {language === 'bn' ? 'Google ক্লাউড সিঙ্ক সক্রিয়' : 'Google Cloud Sync Active'}: <strong className="text-white font-semibold">{currentUser.email || currentUser.displayName}</strong>
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-400 hidden sm:inline">
+            {language === 'bn' ? 'ক্রোম ও ডিভাইসে হিস্টোরি সংরক্ষিত' : 'Synced across Chrome & devices'}
+          </span>
+        </div>
+      )}
 
       {/* History List */}
       {history.length === 0 ? (

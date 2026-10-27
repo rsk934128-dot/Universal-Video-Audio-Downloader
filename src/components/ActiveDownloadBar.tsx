@@ -132,6 +132,10 @@ export const ActiveDownloadBar: React.FC<Props> = ({
                 )}
                 {!isCompleted && !isFailed && (
                   <>
+                    <span className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px]">
+                      <span>🔒</span>
+                      <span>{language === 'bn' ? 'লক স্ক্রিন সাপোর্ট' : 'Lock-Screen Active'}</span>
+                    </span>
                     <span>•</span>
                     <span>{task.downloadedSize} / {task.totalSize}</span>
                     {task.eta && (

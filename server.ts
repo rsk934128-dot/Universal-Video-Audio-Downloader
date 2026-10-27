@@ -7,6 +7,7 @@ import {
   proxyStreamMedia,
   inspectMediaUrl 
 } from './server/bypassEngine';
+import { searchYouTubeSongs } from './server/youtubeSearch';
 
 async function startServer() {
   const app = express();
@@ -19,6 +20,21 @@ async function startServer() {
   // Health check
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
+  // YouTube Song & Album Search endpoint
+  app.get('/api/youtube/search', async (req: Request, res: Response) => {
+    const q = (req.query.q as string) || '';
+    if (!q.trim()) {
+      return res.status(400).json({ success: false, error: 'Query parameter q is required', tracks: [] });
+    }
+    try {
+      const tracks = await searchYouTubeSongs(q);
+      return res.json({ success: true, count: tracks.length, tracks });
+    } catch (err: any) {
+      console.error('YouTube search route error:', err.message);
+      return res.status(500).json({ success: false, error: err.message, tracks: [] });
+    }
   });
 
   // Bypass Engines status endpoint

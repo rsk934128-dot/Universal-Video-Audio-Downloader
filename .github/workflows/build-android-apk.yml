@@ -1,0 +1,124 @@
+name: Build and Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish as GitHub Release?'
+        required: false
+        default: 'false'
+        type: boolean
+      tag_name:
+        description: 'Release Tag Name (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+        type: string
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🟢 Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install Web Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: 🏗️ Build Vite Frontend
+        run: npm run build
+
+      - name: ☕ Setup Java Development Kit (JDK 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: 🤖 Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 🔄 Sync Capacitor Android Platform
+        run: npx cap sync android
+
+      - name: 🔑 Make Gradlew Executable
+        run: chmod +x ./android/gradlew
+
+      - name: ⚡ Build Debug APK via Gradle
+        run: |
+          cd android
+          ./gradlew assembleDebug --stacktrace
+
+      - name: 🏷️ Prepare APK Assets
+        id: prepare_apk
+        run: |
+          VERSION_TAG="${{ github.ref_name }}"
+          if [ -z "$VERSION_TAG" ] || [ "$VERSION_TAG" = "main" ] || [ "$VERSION_TAG" = "master" ]; then
+            VERSION_TAG="${{ github.event.inputs.tag_name || 'latest' }}"
+          fi
+          
+          OUTPUT_DIR="android/app/build/outputs/apk/debug"
+          APK_NAME="Universal-Video-Downloader-${VERSION_TAG}.apk"
+          
+          if [ -f "$OUTPUT_DIR/app-debug.apk" ]; then
+            cp "$OUTPUT_DIR/app-debug.apk" "$OUTPUT_DIR/$APK_NAME"
+            echo "apk_path=$OUTPUT_DIR/$APK_NAME" >> $GITHUB_OUTPUT
+            echo "apk_name=$APK_NAME" >> $GITHUB_OUTPUT
+            echo "version_tag=$VERSION_TAG" >> $GITHUB_OUTPUT
+            echo "Successfully prepared $APK_NAME"
+          else
+            echo "Error: app-debug.apk not found!"
+            ls -la "$OUTPUT_DIR"
+            exit 1
+          fi
+
+      - name: 💾 Upload APK as GitHub Action Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Universal-Video-Downloader-APK
+          path: ${{ steps.prepare_apk.outputs.apk_path }}
+          retention-days: 30
+
+      - name: 🚀 Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.prepare_apk.outputs.version_tag }}
+          name: "Universal Video Downloader ${{ steps.prepare_apk.outputs.version_tag }}"
+          body: |
+            ### 📱 Universal Video & Audio Downloader APK Release (${{ steps.prepare_apk.outputs.version_tag }})
+            
+            #### 🌟 Features in this Build:
+            - **Universal Downloader**: High-speed downloads for YouTube, TikTok (No Watermark), Facebook, Instagram Reels, and Twitter/X.
+            - **Direct SD Card / Phone Memory Storage**: Choose where your audio/video files are saved.
+            - **Google Sign-In & Cloud Sync**: Cloud-backed download history with Google Authentication.
+            - **Android Share Target**: Share any video link from YouTube or TikTok straight to Downloader Pro.
+            - **Resilient Bypass Stream**: Prevents 0 KB / zero-byte download errors.
+            
+            #### 📲 Installation Instructions:
+            1. Download the `.apk` file below directly to your Android device.
+            2. Tap the downloaded file to install.
+            3. If prompted, enable **"Allow from this source"** or **"Install unknown apps"** in Android Settings.
+            4. Open the app and enjoy limitless media downloading!
+          files: ${{ steps.prepare_apk.outputs.apk_path }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

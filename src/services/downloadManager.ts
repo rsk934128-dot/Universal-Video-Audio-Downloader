@@ -2,6 +2,7 @@ import confetti from 'canvas-confetti';
 import { DownloadTask, MediaFormat, VideoMetadata } from '../types';
 import { notificationManager } from './notificationManager';
 import { storagePreferenceManager } from './storagePreferenceManager';
+import { backgroundKeepAlive } from './backgroundKeepAlive';
 
 const STORAGE_KEY = 'video_downloader_history_v1';
 
@@ -96,6 +97,24 @@ export function startDownloadSimulation(
   let pollingInterval: any = null;
   let simulatedTimer: any = null;
 
+  // Register task with background keep-alive engine (persists across screen lock and minimized tabs)
+  backgroundKeepAlive.registerDownload(taskId, video.title, video.thumbnail);
+
+  const wrappedOnProgress = (t: DownloadTask) => {
+    backgroundKeepAlive.updateDownloadProgress(taskId, t.progress, t.speed, t.eta);
+    onProgress(t);
+  };
+
+  const wrappedOnComplete = (t: DownloadTask) => {
+    backgroundKeepAlive.unregisterDownload(taskId);
+    onComplete(t);
+  };
+
+  const wrappedOnError = (id: string, err: string) => {
+    backgroundKeepAlive.unregisterDownload(id);
+    onError(id, err);
+  };
+
   const task: DownloadTask = {
     id: taskId,
     videoId: video.id,
@@ -116,7 +135,7 @@ export function startDownloadSimulation(
     fileName,
   };
 
-  onProgress({ ...task });
+  wrappedOnProgress({ ...task });
 
   // Execution flow for the TARGET link:
   // 1. If format already contains directDownloadUrl, stream and download directly!
@@ -135,7 +154,7 @@ export function startDownloadSimulation(
         task.progress = 60;
         task.speed = '7.8 MB/s';
         task.eta = '1s';
-        onProgress({ ...task });
+        wrappedOnProgress({ ...task });
 
         setTimeout(() => {
           if (isCancelled) return;
@@ -158,7 +177,7 @@ export function startDownloadSimulation(
 
           triggerBrowserDownload(fileName, format.directDownloadUrl!);
           notificationManager.notifyDownloadComplete(fileName, format.quality);
-          onComplete({ ...task });
+          wrappedOnComplete({ ...task });
         }, 750);
         return;
       }
@@ -168,7 +187,7 @@ export function startDownloadSimulation(
       task.progress = 12;
       task.eta = 'Connecting to media stream...';
       task.speed = 'Initiating...';
-      onProgress({ ...task });
+      wrappedOnProgress({ ...task });
 
       // Progressive extraction updates to prevent any frozen progress perception
       let currentExtractProgress = 12;
@@ -190,7 +209,7 @@ export function startDownloadSimulation(
         task.progress = currentExtractProgress;
         task.eta = extractionMessages[msgIdx];
         task.speed = 'Active';
-        onProgress({ ...task });
+        wrappedOnProgress({ ...task });
       }, 700);
 
       const apiFmt = getApiFormat(format);
@@ -227,7 +246,7 @@ export function startDownloadSimulation(
         task.directUrl = startData.directUrl || video.originalUrl;
         task.downloadedBytes = Math.round(totalBytes * 0.6);
         task.downloadedSize = `${(task.downloadedBytes / (1024 * 1024)).toFixed(1)} MB`;
-        onProgress({ ...task });
+        wrappedOnProgress({ ...task });
 
         setTimeout(() => {
           if (isCancelled) return;
@@ -235,7 +254,7 @@ export function startDownloadSimulation(
           task.eta = 'Finalizing...';
           task.downloadedBytes = Math.round(totalBytes * 0.85);
           task.downloadedSize = `${(task.downloadedBytes / (1024 * 1024)).toFixed(1)} MB`;
-          onProgress({ ...task });
+          wrappedOnProgress({ ...task });
 
           setTimeout(() => {
             if (isCancelled) return;
@@ -273,7 +292,7 @@ export function startDownloadSimulation(
       task.progress = 30;
       task.eta = 'Encoding target media stream...';
       task.speed = '4.5 MB/s';
-      onProgress({ ...task });
+      wrappedOnProgress({ ...task });
 
       let attempts = 0;
       const maxAttempts = 50; // Up to 75 seconds polling
@@ -304,7 +323,7 @@ export function startDownloadSimulation(
               task.downloadedBytes = totalBytes;
               task.downloadedSize = task.totalSize;
 
-              const realDownloadUrl = `/api/proxy-download?url=${encodeURIComponent(pData.downloadUrl)}&filename=${encodeURIComponent(fileName)}&type=${format.type}&stream=true`;
+              const realDownloadUrl = `/api/proxy-download?url=${encodeURIComponent(pData.downloadUrl)}&originUrl=${encodeURIComponent(video.originalUrl)}&filename=${encodeURIComponent(fileName)}&type=${format.type}&isAudio=${format.type === 'audio'}&stream=true`;
               task.fileBlobUrl = realDownloadUrl;
               task.directUrl = pData.downloadUrl;
 
@@ -320,7 +339,7 @@ export function startDownloadSimulation(
               // Trigger download of TARGET media file
               triggerBrowserDownload(fileName, realDownloadUrl);
               notificationManager.notifyDownloadComplete(fileName, format.quality);
-              onComplete({ ...task });
+              wrappedOnComplete({ ...task });
               return;
             } else {
               // In progress for target video
@@ -333,7 +352,7 @@ export function startDownloadSimulation(
               task.eta = `${Math.max(2, Math.round((maxAttempts - attempts) * 1.5))}s`;
               task.downloadedBytes = Math.round(totalBytes * (task.progress / 100));
               task.downloadedSize = `${(task.downloadedBytes / (1024 * 1024)).toFixed(1)} MB`;
-              onProgress({ ...task });
+              wrappedOnProgress({ ...task });
             }
           }
         } catch (pollErr) {
@@ -345,8 +364,8 @@ export function startDownloadSimulation(
           task.status = 'failed';
           task.error = 'টার্গেট লিঙ্ক প্রসেস হতে অতিরিক্ত সময় লেগেছে। পুনরায় চেষ্টা করুন বা সরাসরি বাইপাস ফরম্যাট বেছে নিন।';
           task.eta = 'Timed out';
-          onProgress({ ...task });
-          onError(taskId, task.error);
+          wrappedOnProgress({ ...task });
+          wrappedOnError(taskId, task.error);
         }
       }, 1500);
     } catch (startErr: any) {
@@ -354,8 +373,8 @@ export function startDownloadSimulation(
       task.status = 'failed';
       task.error = startErr.message || 'টার্গেট ভিডিও ডাউনলোড করতে সমস্যা হয়েছে। অনুগ্রহ করে লিঙ্ক চেক করে আবার চেষ্টা করুন।';
       task.eta = 'Failed';
-      onProgress({ ...task });
-      onError(taskId, task.error);
+      wrappedOnProgress({ ...task });
+      wrappedOnError(taskId, task.error);
     }
   };
 
@@ -370,7 +389,7 @@ export function startDownloadSimulation(
       if (simulatedTimer) clearInterval(simulatedTimer);
       task.status = 'failed';
       task.error = 'Cancelled by user';
-      onError(taskId, 'Cancelled');
+      wrappedOnError(taskId, 'Cancelled');
     },
   };
 }
