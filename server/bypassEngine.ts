@@ -295,8 +295,7 @@ function runYtDlpUrlExtractor(url: string, isAudio: boolean): Promise<YtDlpExtra
         .catch(() => resolve(null));
     });
 
-    child.on('error', (err) => {
-      console.warn('yt-dlp child spawn error:', err.message);
+    child.on('error', () => {
       resolve(null);
     });
   });
@@ -407,8 +406,8 @@ export async function resolveBypassMedia(url: string, format: string): Promise<B
         format: ext,
       };
     }
-  } catch (ytErr: any) {
-    console.warn('Native yt-dlp extractor error, attempting cloud fallback:', ytErr.message);
+  } catch {
+    // Native yt-dlp extractor fallback
   }
 
   // Tier 4: Cloud Converter Engine as fallback
@@ -417,79 +416,29 @@ export async function resolveBypassMedia(url: string, format: string): Promise<B
     return cloudResult;
   }
 
-  // Tier 5: Guaranteed Ultra-Resilient Engine (Always provides a playable, non-zero-byte stream)
-  const fallbackExt = isAudio ? 'mp3' : 'mp4';
-  let cleanTitle = 'media_download';
-  try {
-    const parsed = new URL(url);
-    cleanTitle = parsed.pathname.split('/').filter(Boolean).pop() || 'media_download';
-    cleanTitle = cleanTitle.replace(/[\\/:*?"<>|]/g, '_').slice(0, 50);
-  } catch {}
-  const fallbackFilename = `${cleanTitle}.${fallbackExt}`;
-
+  // If all automated upstream engines fail (e.g. YouTube bot check on Cloud IP):
+  // Return clear failure instead of generating fake sine wave test tones
   return {
-    success: true,
-    engine: 'Universal Resilient Bypass Engine (High-Speed)',
-    isDirect: true,
-    id: 'resilient_' + Date.now(),
-    downloadUrl: `/api/proxy-download?url=${encodeURIComponent(url)}&originUrl=${encodeURIComponent(url)}&filename=${encodeURIComponent(fallbackFilename)}&isAudio=${isAudio}&stream=true`,
-    directUrl: `/api/proxy-download?url=${encodeURIComponent(url)}&originUrl=${encodeURIComponent(url)}&filename=${encodeURIComponent(fallbackFilename)}&isAudio=${isAudio}&stream=true`,
-    title: cleanTitle,
-    format: fallbackExt,
+    success: false,
+    engine: 'YouTube Shield Protection',
+    error: 'ইউটিউব বট সুরক্ষার কারণে ক্লাউড সার্ভার থেকে সরাসরি ডাউনলোড সীমাবদ্ধ। অনুগ্রহ করে "আসল গান ডাউনলোড সহায়ক" বিকল্পটি ব্যবহার করুন অথবা অ্যাপে সরাসরি শুনুন।',
   };
 }
 
-// Resilient fallback media generator using server FFmpeg (ensures 0 KB never occurs)
+// Resilient media handler: cleanly informs client when upstream stream is unavailable without generating fake sine audio
 export function streamResilientMedia(
   cleanFilename: string,
   isAudio: boolean,
   res: Response
 ) {
-  let contentType = isAudio ? 'audio/mpeg' : 'video/mp4';
-  const lowerName = cleanFilename.toLowerCase();
-  if (lowerName.endsWith('.mp3')) contentType = 'audio/mpeg';
-  else if (lowerName.endsWith('.m4a')) contentType = 'audio/mp4';
-  else if (lowerName.endsWith('.mp4')) contentType = 'video/mp4';
-  else if (lowerName.endsWith('.webm')) contentType = isAudio ? 'audio/webm' : 'video/webm';
-
-  const asciiSafe = cleanFilename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
-  const utf8Encoded = encodeURIComponent(cleanFilename);
-
   if (!res.headersSent) {
-    res.status(200);
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', `attachment; filename="${asciiSafe}"; filename*=UTF-8''${utf8Encoded}`);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  }
-
-  const ffmpegArgs = isAudio ? [
-    '-f', 'lavfi',
-    '-i', 'sine=frequency=440:duration=15',
-    '-c:a', 'libmp3lame',
-    '-b:a', '320k',
-    '-f', 'mp3',
-    '-'
-  ] : [
-    '-f', 'lavfi',
-    '-i', 'color=c=0x0f172a:s=1280x720:d=10:r=30',
-    '-f', 'lavfi',
-    '-i', 'sine=frequency=528:duration=10',
-    '-c:v', 'libx264',
-    '-pix_fmt', 'yuv420p',
-    '-preset', 'ultrafast',
-    '-c:a', 'aac',
-    '-b:a', '192k',
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-f', 'mp4',
-    '-'
-  ];
-
-  const ffmpeg = spawn('ffmpeg', ffmpegArgs);
-  ffmpeg.stdout.pipe(res);
-  ffmpeg.on('error', (err) => {
-    console.warn('Fallback ffmpeg stream error:', err);
+    res.status(503).json({
+      success: false,
+      error: 'মিডিয়া স্ট্রিম সার্ভার থেকে পাওয়া যায়নি। অনুগ্রহ করে বিকল্প ডাউনলোড লিংক ব্যবহার করুন।',
+    });
+  } else {
     if (!res.writableEnded) res.end();
-  });
+  }
 }
 
 // Direct stdout streaming with yt-dlp with zero-byte detection and resilient fallback
@@ -518,17 +467,19 @@ export function streamYtDlpMedia(
   const asciiSafe = cleanFilename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
   const utf8Encoded = encodeURIComponent(cleanFilename);
 
-  if (!res.headersSent) {
-    res.status(200);
-    res.setHeader('Content-Type', contentType);
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${asciiSafe}"; filename*=UTF-8''${utf8Encoded}`
-    );
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Accept-Ranges');
-    res.setHeader('Accept-Ranges', 'none');
-  }
+  const sendHeaders = () => {
+    if (!res.headersSent) {
+      res.status(200);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${asciiSafe}"; filename*=UTF-8''${utf8Encoded}`
+      );
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Accept-Ranges');
+      res.setHeader('Accept-Ranges', 'none');
+    }
+  };
 
   const args = [
     ytDlpPath,
@@ -566,26 +517,28 @@ export function streamYtDlpMedia(
   let bytesSent = 0;
   child.stdout.on('data', (d) => {
     bytesSent += d.length;
+    sendHeaders();
     res.write(d);
   });
 
-  child.stdout.on('error', (err) => {
-    console.warn('yt-dlp stream pipe error:', err.message);
-  });
+  child.stdout.on('error', () => {});
 
-  child.stderr.on('data', (d) => {
-    const msg = d.toString();
-    if (msg.includes('ERROR:')) {
-      console.warn('yt-dlp stream error:', msg.trim());
-    }
+  child.stderr.on('data', () => {
+    // Silently handle expected datacenter bot checks without emitting to stderr
   });
 
   child.on('close', () => {
     if (bytesSent === 0) {
-      console.warn('yt-dlp produced 0 bytes, piping guaranteed resilient media stream...');
-      streamResilientMedia(cleanFilename, isAudio, res);
+      if (!res.headersSent) {
+        res.status(503).json({
+          success: false,
+          error: 'ইউটিউব বট সুরক্ষার কারণে ক্লাউড সার্ভার থেকে সরাসরি ডাউনলোড সীমাবদ্ধ। অনুগ্রহ করে বিকল্প ডাউনলোড বাটন ব্যবহার করুন।',
+        });
+      } else {
+        if (!res.writableEnded) res.end();
+      }
     } else {
-      res.end();
+      if (!res.writableEnded) res.end();
     }
   });
 }

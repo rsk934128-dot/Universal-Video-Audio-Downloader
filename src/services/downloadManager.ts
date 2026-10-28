@@ -34,20 +34,9 @@ export function saveDownloadHistory(history: DownloadTask[]): void {
 
 // Trigger real browser download or save directly to SD Card / Phone memory
 export function triggerBrowserDownload(fileName: string, targetUrl: string): void {
-  try {
-    const config = storagePreferenceManager.getConfig();
-    if (config.destination === 'sd_card' || config.destination === 'ask_each_time') {
-      storagePreferenceManager.saveFileToUserStorage(fileName, targetUrl).catch((err) => {
-        console.warn('Direct storage save notice:', err);
-      });
-      return;
-    }
-  } catch (e) {
-    console.warn('Storage preference check notice, proceeding with direct download:', e);
-  }
-
-  // Standard browser download
-  storagePreferenceManager.fallbackBrowserDownload(fileName, targetUrl);
+  storagePreferenceManager.saveFileToUserStorage(fileName, targetUrl).catch((err) => {
+    console.warn('Storage save warning:', err);
+  });
 }
 
 // Sanitize filename for safe OS saving
@@ -226,7 +215,12 @@ export function startDownloadSimulation(
       }
 
       if (!startResp.ok) {
-        throw new Error(`Server returned HTTP ${startResp.status}`);
+        let errorMsg = `Server returned HTTP ${startResp.status}`;
+        try {
+          const errJson = await startResp.json();
+          if (errJson.error) errorMsg = errJson.error;
+        } catch {}
+        throw new Error(errorMsg);
       }
 
       const startData = await startResp.json();

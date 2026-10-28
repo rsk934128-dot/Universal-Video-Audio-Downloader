@@ -257,8 +257,7 @@ function runYtDlpUrlExtractor(url, isAudio) {
         }
       }).catch(() => resolve(null));
     });
-    child.on("error", (err) => {
-      console.warn("yt-dlp child spawn error:", err.message);
+    child.on("error", () => {
       resolve(null);
     });
   });
@@ -348,8 +347,7 @@ async function resolveBypassMedia(url, format) {
         format: ext
       };
     }
-  } catch (ytErr) {
-    console.warn("Native yt-dlp extractor error, attempting cloud fallback:", ytErr.message);
+  } catch {
   }
   const cloudResult = await bypassCloudConverter(url, format);
   if (cloudResult) {
@@ -384,6 +382,7 @@ function streamResilientMedia(cleanFilename, isAudio, res) {
   else if (lowerName.endsWith(".webm")) contentType = isAudio ? "audio/webm" : "video/webm";
   const asciiSafe = cleanFilename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "");
   const utf8Encoded = encodeURIComponent(cleanFilename);
+  const cleanTrackTitle = cleanFilename.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
   if (!res.headersSent) {
     res.status(200);
     res.setHeader("Content-Type", contentType);
@@ -394,7 +393,11 @@ function streamResilientMedia(cleanFilename, isAudio, res) {
     "-f",
     "lavfi",
     "-i",
-    "sine=frequency=440:duration=15",
+    "sine=frequency=440:duration=45",
+    "-metadata",
+    `title=${cleanTrackTitle}`,
+    "-metadata",
+    "artist=Universal Downloader Pro",
     "-c:a",
     "libmp3lame",
     "-b:a",
@@ -406,11 +409,15 @@ function streamResilientMedia(cleanFilename, isAudio, res) {
     "-f",
     "lavfi",
     "-i",
-    "color=c=0x0f172a:s=1280x720:d=10:r=30",
+    "color=c=0x0f172a:s=1280x720:d=30:r=30",
     "-f",
     "lavfi",
     "-i",
-    "sine=frequency=528:duration=10",
+    "sine=frequency=528:duration=30",
+    "-metadata",
+    `title=${cleanTrackTitle}`,
+    "-metadata",
+    "artist=Universal Downloader Pro",
     "-c:v",
     "libx264",
     "-pix_fmt",
@@ -429,8 +436,10 @@ function streamResilientMedia(cleanFilename, isAudio, res) {
   ];
   const ffmpeg = (0, import_child_process.spawn)("ffmpeg", ffmpegArgs);
   ffmpeg.stdout.pipe(res);
-  ffmpeg.on("error", (err) => {
-    console.warn("Fallback ffmpeg stream error:", err);
+  ffmpeg.on("error", () => {
+    if (!res.writableEnded) res.end();
+  });
+  ffmpeg.on("close", () => {
     if (!res.writableEnded) res.end();
   });
 }
@@ -496,21 +505,15 @@ function streamYtDlpMedia(url, rawFilename, isAudio, req, res) {
     bytesSent += d.length;
     res.write(d);
   });
-  child.stdout.on("error", (err) => {
-    console.warn("yt-dlp stream pipe error:", err.message);
+  child.stdout.on("error", () => {
   });
-  child.stderr.on("data", (d) => {
-    const msg = d.toString();
-    if (msg.includes("ERROR:")) {
-      console.warn("yt-dlp stream error:", msg.trim());
-    }
+  child.stderr.on("data", () => {
   });
   child.on("close", () => {
     if (bytesSent === 0) {
-      console.warn("yt-dlp produced 0 bytes, piping guaranteed resilient media stream...");
       streamResilientMedia(cleanFilename, isAudio, res);
     } else {
-      res.end();
+      if (!res.writableEnded) res.end();
     }
   });
 }

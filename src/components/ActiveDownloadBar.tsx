@@ -15,7 +15,8 @@ import {
   HardDrive,
   Smartphone,
   Share2,
-  FolderDown
+  FolderDown,
+  ExternalLink
 } from 'lucide-react';
 
 interface Props {
@@ -165,15 +166,14 @@ export const ActiveDownloadBar: React.FC<Props> = ({
                   <span>{language === 'bn' ? 'মেমোরি কার্ডে সেভ' : 'Save to SD'}</span>
                 </button>
 
-                <a
+                <button
                   id="direct-save-file-link"
-                  href={task.fileBlobUrl || task.directUrl}
-                  download={task.fileName}
+                  onClick={() => triggerBrowserDownload(task.fileName, task.fileBlobUrl || task.directUrl!)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold border border-slate-700 transition"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>{language === 'bn' ? 'ফাইল সেভ' : 'Save File'}</span>
-                </a>
+                </button>
 
                 <button
                   id="save-again-btn"
@@ -188,15 +188,29 @@ export const ActiveDownloadBar: React.FC<Props> = ({
             )}
 
             {isFailed && (
-              <button
-                id="retry-failed-download-btn"
-                onClick={() => onRetry?.(task)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-950/40 transition"
-                title="Retry download"
-              >
-                <RefreshCw className="w-3.5 h-3.5 text-white" />
-                <span>{language === 'bn' ? 'পুনরায় চেষ্টা করুন' : 'Retry'}</span>
-              </button>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {task.originalUrl && (
+                  <a
+                    href={`https://www.ssyoutube.com/watch?v=${task.videoId.replace(/^yt-/, '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-950/40 transition"
+                    title="মোবাইলের নিজস্ব নেটওয়ার্ক থেকে সরাসরি আসল ফাইলটি ডাউনলোড করুন"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-white" />
+                    <span>{language === 'bn' ? 'আসল গান ডাউনলোড' : 'Direct Download'}</span>
+                  </a>
+                )}
+                <button
+                  id="retry-failed-download-btn"
+                  onClick={() => onRetry?.(task)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition"
+                  title="Retry download"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-slate-300" />
+                  <span>{language === 'bn' ? 'পুনরায়' : 'Retry'}</span>
+                </button>
+              </div>
             )}
 
             {!isCompleted && !isFailed && (

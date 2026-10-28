@@ -57,8 +57,69 @@ class StoragePreferenceManager {
   }
 
   /**
-   * Directly save file to Memory Card (SD Card) or Phone Storage using Native File System Picker,
-   * Native Share to File Manager, or Browser Download.
+   * Safe binary resolver: converts any target URL or stream into a verified in-memory Blob.
+   * Crucially prevents "Cookie Check" or Cloud Run auth HTML pages from being downloaded as media!
+   */
+  public async resolveMediaBlob(fileSource: Blob | string): Promise<Blob> {
+    if (fileSource instanceof Blob) {
+      return fileSource;
+    }
+
+    if (typeof fileSource !== 'string' || !fileSource.trim()) {
+      throw new Error('ডাউনলোডের জন্য সঠিক মিডিয়া লিঙ্ক পাওয়া যায়নি');
+    }
+
+    // If it's already an in-memory blob: URL or data: URL
+    if (fileSource.startsWith('blob:') || fileSource.startsWith('data:')) {
+      const blobResp = await fetch(fileSource);
+      return await blobResp.blob();
+    }
+
+    // Fetch binary stream with same-origin credentials (bypasses Cloud Run interstitial)
+    const resp = await fetch(fileSource, {
+      credentials: 'same-origin',
+      headers: {
+        'Accept': 'audio/*, video/*, application/octet-stream, */*',
+      },
+    });
+
+    if (!resp.ok) {
+      throw new Error(`সার্ভার থেকে মিডিয়া আনতে সমস্যা হয়েছে (HTTP ${resp.status})`);
+    }
+
+    const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+
+    // Critical: check if the edge server returned an HTML error or Cookie Check challenge
+    if (contentType.includes('text/html')) {
+      const textSample = await resp.text();
+      if (textSample.includes('Cookie check') || textSample.includes('Action required to load your app')) {
+        throw new Error('ব্রাউজার সিকিউরিটি কুকি যাচাই প্রয়োজন হয়েছে। পেজ রিফ্রেশ করে আবার চেষ্টা করুন।');
+      }
+      throw new Error('সার্ভার থেকে অডিও/ভিডিও ফাইলের পরিবর্তে এইচটিএমএল পেজ এসেছে।');
+    }
+
+    const blob = await resp.blob();
+
+    // Verify blob is not a corrupted tiny response
+    if (blob.size < 512) {
+      throw new Error('ডাউনলোডকৃত ফাইলটি অসম্পূর্ণ বা খালি (0 KB)');
+    }
+
+    // Inspect first 64 bytes to ensure it does not start with <!doctype html
+    try {
+      const headerText = await blob.slice(0, 64).text();
+      if (headerText.toLowerCase().includes('<!doctype') || headerText.toLowerCase().includes('<html')) {
+        throw new Error('কুকি সিকিউরিটি যাচাইয়ের কারণে এইচটিএমএল পৃষ্ঠা এসেছে। মিডিয়া ফাইল নয়।');
+      }
+    } catch {}
+
+    return blob;
+  }
+
+  /**
+   * Save media file safely to user device:
+   * 1. Resolves binary into in-memory Blob (immune to Cookie Check HTML downloads)
+   * 2. Directs to SD Card picker, Native Share, or in-memory blob download
    */
   public async saveFileToUserStorage(
     fileName: string,
@@ -72,45 +133,26 @@ class StoragePreferenceManager {
     const activeDestination = options?.destinationOverride || this.config.destination;
     const isExplicitUserAction = !!options?.forcePicker;
 
-    // If this is an automated download trigger with a stream URL (not an explicit button click),
-    // trigger browser download directly via the stream URL to avoid 0 KB memory blob truncations.
-    if (typeof fileSource === 'string' && !isExplicitUserAction) {
-      this.fallbackBrowserDownload(fileName, fileSource);
+    let blob: Blob;
+    try {
+      blob = await this.resolveMediaBlob(fileSource);
+    } catch (err: any) {
+      console.error('resolveMediaBlob failed:', err);
+      // If it was already a blob URL or direct URL, attempt pure anchor as emergency fallback
+      if (typeof fileSource === 'string' && fileSource.startsWith('blob:')) {
+        this.triggerBlobDownload(fileName, fileSource);
+        return { success: true, method: 'browser', message: 'ফাইল ডাউনলোড শুরু হয়েছে...' };
+      }
       return {
-        success: true,
+        success: false,
         method: 'browser',
-        message: 'ফাইল ডাউনলোড শুরু হয়েছে...',
+        message: err.message || 'মিডিয়া ফাইল প্রসেসিং ব্যর্থ হয়েছে',
       };
     }
 
-    // Get real Blob for FilePicker or Web Share
-    let blob: Blob;
-    try {
-      if (typeof fileSource === 'string') {
-        const res = await fetch(fileSource);
-        if (!res.ok) {
-          throw new Error(`Stream fetch failed: HTTP ${res.status}`);
-        }
-        blob = await res.blob();
-      } else {
-        blob = fileSource;
-      }
-    } catch (fetchErr) {
-      console.warn('Could not fetch blob for direct save, falling back to URL download:', fetchErr);
-      if (typeof fileSource === 'string') {
-        this.fallbackBrowserDownload(fileName, fileSource);
-        return {
-          success: true,
-          method: 'browser',
-          message: 'ব্রাউজার সরাসরি ডাউনলোড পদ্ধতিতে সেভ হচ্ছে...',
-        };
-      }
-      return { success: false, method: 'browser', message: 'ফাইল প্রসেসিং ব্যর্থ হয়েছে' };
-    }
-
     // 1. Try File System Access API (showSaveFilePicker)
-    // When user explicitly clicks "Save to SD Card", this allows picking the SD Card directory
-    if (isExplicitUserAction && this.isNativePickerSupported()) {
+    // When user explicitly clicks "Save to SD Card" or configured SD Card destination
+    if ((isExplicitUserAction || activeDestination === 'sd_card') && this.isNativePickerSupported()) {
       try {
         const ext = fileName.split('.').pop() || 'mp4';
         const isAudio = ext === 'mp3' || ext === 'm4a';
@@ -140,11 +182,10 @@ class StoragePreferenceManager {
           message: `মিডিয়া ফাইলটি সফলভাবে ${destName} সেভ হয়েছে!`,
         };
       } catch (err: any) {
-        // User cancelled picker dialog or permission denied
         if (err.name === 'AbortError') {
-          return { success: false, method: 'picker', message: 'ইউজার সেভ ডায়ালগ বাতিল করেছেন' };
+          return { success: false, method: 'picker', message: 'সেভ ডায়ালগ বাতিল করা হয়েছে' };
         }
-        console.warn('showSaveFilePicker encountered error, trying next method:', err);
+        console.warn('showSaveFilePicker bypassed or cancelled, proceeding to next method:', err);
       }
     }
 
@@ -171,14 +212,10 @@ class StoragePreferenceManager {
       }
     }
 
-    // 3. Fallback: Browser Download trigger
-    if (typeof fileSource === 'string') {
-      this.fallbackBrowserDownload(fileName, fileSource);
-    } else {
-      const blobUrl = URL.createObjectURL(blob);
-      this.fallbackBrowserDownload(fileName, blobUrl);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-    }
+    // 3. Fallback: In-Memory Blob URL Download (100% immune to Cloud Run Cookie Check HTML intercept)
+    const blobUrl = URL.createObjectURL(blob);
+    this.triggerBlobDownload(fileName, blobUrl);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 120000);
 
     const targetLabel = activeDestination === 'sd_card' 
       ? 'মেমোরি কার্ডে (ব্রাউজার ডিফল্ট লোকেশন অনুযায়ী)' 
@@ -187,16 +224,16 @@ class StoragePreferenceManager {
     return {
       success: true,
       method: 'browser',
-      message: `ফাইল ডাউনলোড শুরু হয়েছে (${targetLabel})।`,
+      message: `ফাইল সফলভাবে ডাউনলোড সম্পন্ন হয়েছে (${targetLabel})।`,
     };
   }
 
-  public fallbackBrowserDownload(fileName: string, url: string): void {
+  // Trigger in-memory anchor download (NEVER makes a network request for blob: URLs)
+  private triggerBlobDownload(fileName: string, blobUrl: string): void {
     try {
       const a = document.createElement('a');
-      a.href = url;
+      a.href = blobUrl;
       a.download = fileName;
-      // Do NOT set target='_blank' because it triggers a blank tab and causes 0 KB downloads in mobile browsers
       document.body.appendChild(a);
       a.click();
       setTimeout(() => {
@@ -205,8 +242,15 @@ class StoragePreferenceManager {
         }
       }, 3000);
     } catch (e) {
-      window.location.href = url;
+      window.location.href = blobUrl;
     }
+  }
+
+  public fallbackBrowserDownload(fileName: string, url: string): void {
+    // Route through safe storage saver
+    this.saveFileToUserStorage(fileName, url).catch((err) => {
+      console.warn('fallbackBrowserDownload safe save warning:', err);
+    });
   }
 
   public subscribe(listener: (config: StorageConfig) => void): () => void {

@@ -3,6 +3,7 @@ import { MediaFormat, VideoMetadata, Language, DownloadTask } from '../types';
 import { getTranslation } from '../utils/translations';
 import { PlatformBadge } from './PlatformBadge';
 import { extractYouTubeId } from '../services/videoExtractor';
+import { triggerBrowserDownload } from '../services/downloadManager';
 import { 
   Download, 
   Music, 
@@ -425,15 +426,14 @@ export const VideoResultCard: React.FC<Props> = ({
                 {/* Download Action */}
                 {activeTask && activeTask.format.id === format.id && activeTask.status === 'completed' ? (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <a
+                    <button
                       id={`save-file-link-${format.id}`}
-                      href={activeTask.fileBlobUrl || activeTask.directUrl}
-                      download={activeTask.fileName}
+                      onClick={() => triggerBrowserDownload(activeTask.fileName, activeTask.fileBlobUrl || activeTask.directUrl!)}
                       className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white text-xs font-bold shadow-lg shadow-emerald-950/40 transition whitespace-nowrap"
                     >
                       <CheckCircle2 className="w-4 h-4 text-white" />
                       <span>{language === 'bn' ? 'ফাইল সেভ করুন' : 'Save File'}</span>
-                    </a>
+                    </button>
                     <button
                       onClick={() => onDownload(format)}
                       className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
