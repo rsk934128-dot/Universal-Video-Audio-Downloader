@@ -306,20 +306,25 @@ async function resolveBypassMedia(url, format) {
   if (!url) {
     return { success: false, engine: "None", error: "Missing target URL" };
   }
-  const isDirect = /\.(mp4|mp3|m4a|webm|wav|ogg|mov|flac|aac)(\?.*)?$/i.test(url);
+  const isDirect = /\.(mp4|mp3|m4a|webm|wav|ogg|mov|flac|aac)(\?.*)?$/i.test(url) || /(googlevideo\.com\/videoplayback|byteoversea\.com|tiktokcdn\.com)/i.test(url);
   if (isDirect) {
     try {
       const parsed = new URL(url);
-      const filename = import_path.default.basename(parsed.pathname) || "media_file";
+      const isAudio2 = String(format).toLowerCase().includes("mp3") || String(format).toLowerCase().includes("audio") || String(format).toLowerCase().includes("m4a");
+      const ext = isAudio2 ? "mp3" : "mp4";
+      let filename = import_path.default.basename(parsed.pathname) || "media_file";
+      if (!filename.includes(".") || filename === "videoplayback") {
+        filename = `googlevideo_stream_${Date.now().toString().slice(-6)}.${ext}`;
+      }
       return {
         success: true,
-        engine: "Direct Media Proxy Bypass",
+        engine: url.includes("googlevideo.com") ? "GoogleVideo Direct CDN Bypass" : "Direct Media Proxy Bypass",
         isDirect: true,
         id: "direct_" + Date.now(),
-        downloadUrl: `/api/proxy-download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}&stream=true`,
+        downloadUrl: `/api/proxy-download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}&isAudio=${isAudio2}&stream=true`,
         directUrl: url,
         title: filename,
-        format: format || "mp4"
+        format: ext
       };
     } catch {
     }
@@ -333,8 +338,8 @@ async function resolveBypassMedia(url, format) {
     const ytdlpMeta = await runYtDlpUrlExtractor(url, isAudio);
     if (ytdlpMeta && ytdlpMeta.url) {
       const ext = isAudio ? ytdlpMeta.ext === "m4a" ? "m4a" : "mp3" : ytdlpMeta.ext || "mp4";
-      const cleanTitle2 = (ytdlpMeta.title || "media_download").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "media_download";
-      const filename = `${cleanTitle2}.${ext}`;
+      const cleanTitle = (ytdlpMeta.title || "media_download").replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "media_download";
+      const filename = `${cleanTitle}.${ext}`;
       return {
         success: true,
         engine: "Native High-Speed Stream Bypass (yt-dlp)",
@@ -342,7 +347,7 @@ async function resolveBypassMedia(url, format) {
         id: "ytdlp_" + Date.now(),
         downloadUrl: `/api/proxy-download?url=${encodeURIComponent(ytdlpMeta.url)}&originUrl=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}&isAudio=${isAudio}&stream=true`,
         directUrl: ytdlpMeta.url,
-        title: ytdlpMeta.title || cleanTitle2,
+        title: ytdlpMeta.title || cleanTitle,
         thumbnail: ytdlpMeta.thumbnail,
         format: ext
       };
@@ -353,95 +358,21 @@ async function resolveBypassMedia(url, format) {
   if (cloudResult) {
     return cloudResult;
   }
-  const fallbackExt = isAudio ? "mp3" : "mp4";
-  let cleanTitle = "media_download";
-  try {
-    const parsed = new URL(url);
-    cleanTitle = parsed.pathname.split("/").filter(Boolean).pop() || "media_download";
-    cleanTitle = cleanTitle.replace(/[\\/:*?"<>|]/g, "_").slice(0, 50);
-  } catch {
-  }
-  const fallbackFilename = `${cleanTitle}.${fallbackExt}`;
   return {
-    success: true,
-    engine: "Universal Resilient Bypass Engine (High-Speed)",
-    isDirect: true,
-    id: "resilient_" + Date.now(),
-    downloadUrl: `/api/proxy-download?url=${encodeURIComponent(url)}&originUrl=${encodeURIComponent(url)}&filename=${encodeURIComponent(fallbackFilename)}&isAudio=${isAudio}&stream=true`,
-    directUrl: `/api/proxy-download?url=${encodeURIComponent(url)}&originUrl=${encodeURIComponent(url)}&filename=${encodeURIComponent(fallbackFilename)}&isAudio=${isAudio}&stream=true`,
-    title: cleanTitle,
-    format: fallbackExt
+    success: false,
+    engine: "YouTube Shield Protection",
+    error: '\u0987\u0989\u099F\u09BF\u0989\u09AC \u09AC\u099F \u09B8\u09C1\u09B0\u0995\u09CD\u09B7\u09BE\u09B0 \u0995\u09BE\u09B0\u09A3\u09C7 \u0995\u09CD\u09B2\u09BE\u0989\u09A1 \u09B8\u09BE\u09B0\u09CD\u09AD\u09BE\u09B0 \u09A5\u09C7\u0995\u09C7 \u09B8\u09B0\u09BE\u09B8\u09B0\u09BF \u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09B8\u09C0\u09AE\u09BE\u09AC\u09A6\u09CD\u09A7\u0964 \u0985\u09A8\u09C1\u0997\u09CD\u09B0\u09B9 \u0995\u09B0\u09C7 "\u0986\u09B8\u09B2 \u0997\u09BE\u09A8 \u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09B8\u09B9\u09BE\u09AF\u09BC\u0995" \u09AC\u09BF\u0995\u09B2\u09CD\u09AA\u099F\u09BF \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09C1\u09A8 \u0985\u09A5\u09AC\u09BE \u0985\u09CD\u09AF\u09BE\u09AA\u09C7 \u09B8\u09B0\u09BE\u09B8\u09B0\u09BF \u09B6\u09C1\u09A8\u09C1\u09A8\u0964'
   };
 }
 function streamResilientMedia(cleanFilename, isAudio, res) {
-  let contentType = isAudio ? "audio/mpeg" : "video/mp4";
-  const lowerName = cleanFilename.toLowerCase();
-  if (lowerName.endsWith(".mp3")) contentType = "audio/mpeg";
-  else if (lowerName.endsWith(".m4a")) contentType = "audio/mp4";
-  else if (lowerName.endsWith(".mp4")) contentType = "video/mp4";
-  else if (lowerName.endsWith(".webm")) contentType = isAudio ? "audio/webm" : "video/webm";
-  const asciiSafe = cleanFilename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "");
-  const utf8Encoded = encodeURIComponent(cleanFilename);
-  const cleanTrackTitle = cleanFilename.replace(/\.[^/.]+$/, "").replace(/_/g, " ");
   if (!res.headersSent) {
-    res.status(200);
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Content-Disposition", `attachment; filename="${asciiSafe}"; filename*=UTF-8''${utf8Encoded}`);
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.status(503).json({
+      success: false,
+      error: "\u09AE\u09BF\u09A1\u09BF\u09AF\u09BC\u09BE \u09B8\u09CD\u099F\u09CD\u09B0\u09BF\u09AE \u09B8\u09BE\u09B0\u09CD\u09AD\u09BE\u09B0 \u09A5\u09C7\u0995\u09C7 \u09AA\u09BE\u0993\u09AF\u09BC\u09BE \u09AF\u09BE\u09AF\u09BC\u09A8\u09BF\u0964 \u0985\u09A8\u09C1\u0997\u09CD\u09B0\u09B9 \u0995\u09B0\u09C7 \u09AC\u09BF\u0995\u09B2\u09CD\u09AA \u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09B2\u09BF\u0982\u0995 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09C1\u09A8\u0964"
+    });
+  } else {
+    if (!res.writableEnded) res.end();
   }
-  const ffmpegArgs = isAudio ? [
-    "-f",
-    "lavfi",
-    "-i",
-    "sine=frequency=440:duration=45",
-    "-metadata",
-    `title=${cleanTrackTitle}`,
-    "-metadata",
-    "artist=Universal Downloader Pro",
-    "-c:a",
-    "libmp3lame",
-    "-b:a",
-    "320k",
-    "-f",
-    "mp3",
-    "-"
-  ] : [
-    "-f",
-    "lavfi",
-    "-i",
-    "color=c=0x0f172a:s=1280x720:d=30:r=30",
-    "-f",
-    "lavfi",
-    "-i",
-    "sine=frequency=528:duration=30",
-    "-metadata",
-    `title=${cleanTrackTitle}`,
-    "-metadata",
-    "artist=Universal Downloader Pro",
-    "-c:v",
-    "libx264",
-    "-pix_fmt",
-    "yuv420p",
-    "-preset",
-    "ultrafast",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "192k",
-    "-movflags",
-    "frag_keyframe+empty_moov+default_base_moof",
-    "-f",
-    "mp4",
-    "-"
-  ];
-  const ffmpeg = (0, import_child_process.spawn)("ffmpeg", ffmpegArgs);
-  ffmpeg.stdout.pipe(res);
-  ffmpeg.on("error", () => {
-    if (!res.writableEnded) res.end();
-  });
-  ffmpeg.on("close", () => {
-    if (!res.writableEnded) res.end();
-  });
 }
 function streamYtDlpMedia(url, rawFilename, isAudio, req, res) {
   const cleanFilename = rawFilename ? rawFilename.replace(/["\r\n\\]/g, "_") : isAudio ? "audio.m4a" : "video.mp4";
@@ -459,17 +390,19 @@ function streamYtDlpMedia(url, rawFilename, isAudio, req, res) {
   }
   const asciiSafe = cleanFilename.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "");
   const utf8Encoded = encodeURIComponent(cleanFilename);
-  if (!res.headersSent) {
-    res.status(200);
-    res.setHeader("Content-Type", contentType);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${asciiSafe}"; filename*=UTF-8''${utf8Encoded}`
-    );
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Type, Accept-Ranges");
-    res.setHeader("Accept-Ranges", "none");
-  }
+  const sendHeaders = () => {
+    if (!res.headersSent) {
+      res.status(200);
+      res.setHeader("Content-Type", contentType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${asciiSafe}"; filename*=UTF-8''${utf8Encoded}`
+      );
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Expose-Headers", "Content-Disposition, Content-Type, Accept-Ranges");
+      res.setHeader("Accept-Ranges", "none");
+    }
+  };
   const args = [
     ytDlpPath,
     "--no-warnings",
@@ -503,6 +436,7 @@ function streamYtDlpMedia(url, rawFilename, isAudio, req, res) {
   let bytesSent = 0;
   child.stdout.on("data", (d) => {
     bytesSent += d.length;
+    sendHeaders();
     res.write(d);
   });
   child.stdout.on("error", () => {
@@ -511,7 +445,14 @@ function streamYtDlpMedia(url, rawFilename, isAudio, req, res) {
   });
   child.on("close", () => {
     if (bytesSent === 0) {
-      streamResilientMedia(cleanFilename, isAudio, res);
+      if (!res.headersSent) {
+        res.status(503).json({
+          success: false,
+          error: "\u0987\u0989\u099F\u09BF\u0989\u09AC \u09AC\u099F \u09B8\u09C1\u09B0\u0995\u09CD\u09B7\u09BE\u09B0 \u0995\u09BE\u09B0\u09A3\u09C7 \u0995\u09CD\u09B2\u09BE\u0989\u09A1 \u09B8\u09BE\u09B0\u09CD\u09AD\u09BE\u09B0 \u09A5\u09C7\u0995\u09C7 \u09B8\u09B0\u09BE\u09B8\u09B0\u09BF \u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09B8\u09C0\u09AE\u09BE\u09AC\u09A6\u09CD\u09A7\u0964 \u0985\u09A8\u09C1\u0997\u09CD\u09B0\u09B9 \u0995\u09B0\u09C7 \u09AC\u09BF\u0995\u09B2\u09CD\u09AA \u09A1\u09BE\u0989\u09A8\u09B2\u09CB\u09A1 \u09AC\u09BE\u099F\u09A8 \u09AC\u09CD\u09AF\u09AC\u09B9\u09BE\u09B0 \u0995\u09B0\u09C1\u09A8\u0964"
+        });
+      } else {
+        if (!res.writableEnded) res.end();
+      }
     } else {
       if (!res.writableEnded) res.end();
     }

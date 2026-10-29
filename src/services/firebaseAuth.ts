@@ -136,7 +136,7 @@ export async function signOutUser(): Promise<void> {
 }
 
 // User Profile Firestore Sync
-export async function saveUserProfile(user: User, additionalData?: { language?: string; preferredQuality?: string }): Promise<void> {
+export async function saveUserProfile(user: User, additionalData?: { email?: string; authProvider?: string; language?: string; preferredQuality?: string; [key: string]: any }): Promise<void> {
   try {
     const userRef = doc(db, 'users', user.uid);
     await setDoc(userRef, {

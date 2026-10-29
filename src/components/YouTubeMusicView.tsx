@@ -24,6 +24,7 @@ import {
   RadioTower
 } from 'lucide-react';
 import { YouTubeSongTrack, Language } from '../types';
+import { getUnrestrictedDownloadUrl, getY2MateUrl } from '../utils/downloaderLinks';
 
 interface Props {
   language: Language;
@@ -444,30 +445,30 @@ export const YouTubeMusicView: React.FC<Props> = ({
                 <span>মোবাইল/ব্রাউজার থেকে ১-ক্লিক ডিরেক্ট আসল ডাউনলোড:</span>
               </div>
 
-              {/* Direct Web MP3 Button */}
+              {/* Direct Unrestricted MP3 Button (9xBuddy) */}
               <a
-                href={`https://www.ssyoutube.com/watch?v=${selectedTrackForDownload.id}`}
+                href={getUnrestrictedDownloadUrl(selectedTrackForDownload.id, selectedTrackForDownload.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full flex items-center justify-between p-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-emerald-950/50 transition transform hover:scale-[1.01]"
               >
                 <span className="flex items-center gap-2">
                   <Music className="w-4 h-4 text-white" />
-                  <span>১-ক্লিক আসল MP3 অডিও ডাউনলোড</span>
+                  <span>১-ক্লিক আসল MP3 ডাউনলোড (কপিরাইট মুক্ত)</span>
                 </span>
                 <ExternalLink className="w-4 h-4 text-white/80" />
               </a>
 
-              {/* Direct Web HD Video Button */}
+              {/* Direct Unrestricted HD Video Button (Y2Mate) */}
               <a
-                href={`https://www.ssyoutube.com/watch?v=${selectedTrackForDownload.id}`}
+                href={getY2MateUrl(selectedTrackForDownload.id)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full flex items-center justify-between p-3.5 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold text-xs sm:text-sm shadow-lg shadow-rose-950/50 transition transform hover:scale-[1.01]"
               >
                 <span className="flex items-center gap-2">
                   <Film className="w-4 h-4 text-white" />
-                  <span>১-ক্লিক আসল Full HD 1080p ভিডিও ডাউনলোড</span>
+                  <span>১-ক্লিক Full HD 1080p/720p ভিডিও ডাউনলোড</span>
                 </span>
                 <ExternalLink className="w-4 h-4 text-white/80" />
               </a>

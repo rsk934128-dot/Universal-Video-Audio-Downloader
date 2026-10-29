@@ -133,6 +133,14 @@ class StoragePreferenceManager {
     const activeDestination = options?.destinationOverride || this.config.destination;
     const isExplicitUserAction = !!options?.forcePicker;
 
+    // External downloader URL handler (opens directly in user browser)
+    if (typeof fileSource === 'string' && (fileSource.includes('9xbuddy.com') || fileSource.includes('y2mate.com') || fileSource.includes('ssyoutube.com') || fileSource.includes('cobalt.tools') || fileSource.includes('dirpy.com') || fileSource.includes('y2mate.nu'))) {
+      if (typeof window !== 'undefined') {
+        window.open(fileSource, '_blank', 'noopener,noreferrer');
+      }
+      return { success: true, method: 'browser', message: 'ডাউনলোডার পেজ সফলভাবে ওপেন হয়েছে...' };
+    }
+
     let blob: Blob;
     try {
       blob = await this.resolveMediaBlob(fileSource);

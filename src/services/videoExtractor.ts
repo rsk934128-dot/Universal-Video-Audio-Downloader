@@ -1,4 +1,5 @@
 import { MediaFormat, PlatformType, VideoMetadata } from '../types';
+import { getUnrestrictedDownloadUrl } from '../utils/downloaderLinks';
 
 // Sample item interface (kept for type compatibility)
 export interface SampleVideoItem {
@@ -15,19 +16,19 @@ export interface SampleVideoItem {
 // Deprecated default sample list (removed so target links are exclusively used)
 export const SAMPLE_VIDEOS: SampleVideoItem[] = [];
 
-// Extract pure URL from shared text (Android share sheets often send "Title: https://url")
+// Extract pure URL from shared text (Android share sheets often send "Title: https://url" or concatenated URLs)
 export function extractUrlFromText(text: string): string {
   if (!text) return '';
   const trimmed = text.trim();
-  const urlMatch = trimmed.match(/https?:\/\/[^\s"'<>]+/i);
+  const urlMatch = trimmed.match(/https?:\/\/(?:(?!https?:\/\/)[^\s"'<>])+/i);
   return urlMatch ? urlMatch[0] : trimmed;
 }
 
-// Extract multiple URLs from multiline text, comma/space separated, or mixed content
+// Extract multiple URLs from multiline text, comma/space separated, or concatenated without spaces
 export function extractMultipleUrlsFromText(text: string): string[] {
   if (!text) return [];
-  // Match all http/https URLs
-  const matches = text.match(/https?:\/\/[^\s"'<>\n\r\t,;]+/gi);
+  // Match all http/https URLs with negative lookahead to support glued URLs (e.g. .comhttps://)
+  const matches = text.match(/https?:\/\/(?:(?!https?:\/\/)[^\s"'<>\n\r\t,;])+/gi);
   if (!matches) return [];
   // Clean trailing punctuation and remove duplicates
   const cleaned = matches
@@ -145,6 +146,9 @@ export const BATCH_FORMAT_PRESETS: { id: string; label: string; subLabel: string
 
 export function detectPlatform(url: string): PlatformType {
   const cleanUrl = url.toLowerCase();
+  if (cleanUrl.includes('googlevideo.com') || cleanUrl.includes('videoplayback') || cleanUrl.includes('v-videoapp.com') || cleanUrl.includes('bidnex.com')) {
+    return 'direct';
+  }
   if (cleanUrl.includes('youtube.com') || cleanUrl.includes('youtu.be')) {
     return 'youtube';
   }
@@ -163,7 +167,7 @@ export function detectPlatform(url: string): PlatformType {
   if (cleanUrl.includes('vimeo.com')) {
     return 'vimeo';
   }
-  if (cleanUrl.endsWith('.mp4') || cleanUrl.endsWith('.mp3') || cleanUrl.endsWith('.webm') || cleanUrl.endsWith('.m4a')) {
+  if (/\.(mp4|mp3|webm|m4a|wav|ogg|flac|aac)(\?.*)?$/i.test(cleanUrl)) {
     return 'direct';
   }
   return 'other';
@@ -563,7 +567,10 @@ export async function extractVideoInfo(rawInput: string): Promise<VideoMetadata>
       uploadDate: 'HD Verified',
       thumbnail,
       description: 'Extracted from YouTube. Ready to convert to 320kbps MP3 audio or 1080p Full HD MP4.',
-      formats: generateFormatList(durationSeconds, 'youtube'),
+      formats: generateFormatList(durationSeconds, 'youtube').map(fmt => ({
+        ...fmt,
+        directDownloadUrl: ytId ? getUnrestrictedDownloadUrl(ytId, url) : undefined,
+      })),
     };
   }
 

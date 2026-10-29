@@ -353,21 +353,27 @@ export async function resolveBypassMedia(url: string, format: string): Promise<B
     return { success: false, engine: 'None', error: 'Missing target URL' };
   }
 
-  // Tier 1: Direct media file check (.mp4, .mp3, etc.)
-  const isDirect = /\.(mp4|mp3|m4a|webm|wav|ogg|mov|flac|aac)(\?.*)?$/i.test(url);
+  // Tier 1: Direct media file check (.mp4, .mp3, etc.) or GoogleVideo CDN stream URL
+  const isDirect = /\.(mp4|mp3|m4a|webm|wav|ogg|mov|flac|aac)(\?.*)?$/i.test(url) ||
+    /(googlevideo\.com\/videoplayback|byteoversea\.com|tiktokcdn\.com)/i.test(url);
   if (isDirect) {
     try {
       const parsed = new URL(url);
-      const filename = path.basename(parsed.pathname) || 'media_file';
+      const isAudio = String(format).toLowerCase().includes('mp3') || String(format).toLowerCase().includes('audio') || String(format).toLowerCase().includes('m4a');
+      const ext = isAudio ? 'mp3' : 'mp4';
+      let filename = path.basename(parsed.pathname) || 'media_file';
+      if (!filename.includes('.') || filename === 'videoplayback') {
+        filename = `googlevideo_stream_${Date.now().toString().slice(-6)}.${ext}`;
+      }
       return {
         success: true,
-        engine: 'Direct Media Proxy Bypass',
+        engine: url.includes('googlevideo.com') ? 'GoogleVideo Direct CDN Bypass' : 'Direct Media Proxy Bypass',
         isDirect: true,
         id: 'direct_' + Date.now(),
-        downloadUrl: `/api/proxy-download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}&stream=true`,
+        downloadUrl: `/api/proxy-download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}&isAudio=${isAudio}&stream=true`,
         directUrl: url,
         title: filename,
-        format: format || 'mp4',
+        format: ext,
       };
     } catch {}
   }

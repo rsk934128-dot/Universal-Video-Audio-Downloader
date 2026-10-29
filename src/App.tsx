@@ -33,6 +33,7 @@ import {
   onAuthChange, 
   syncDownloadToCloud 
 } from './services/firebaseAuth';
+import { getUnrestrictedDownloadUrl, getY2MateUrl } from './utils/downloaderLinks';
 import type { User } from 'firebase/auth';
 
 export default function App() {
@@ -404,6 +405,7 @@ export default function App() {
       codec: 'MPEG-1 Layer 3 (MP3)',
       badge: 'Crystal Audio',
       isRecommended: true,
+      directDownloadUrl: getUnrestrictedDownloadUrl(track.id, track.url),
     };
 
     const videoMeta: VideoMetadata = {
@@ -472,6 +474,7 @@ export default function App() {
       codec: 'H.264 / AVC + AAC Stereo',
       badge: 'Fast HD',
       isRecommended: true,
+      directDownloadUrl: getY2MateUrl(track.id),
     };
 
     const videoMeta: VideoMetadata = {

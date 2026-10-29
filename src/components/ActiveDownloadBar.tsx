@@ -3,6 +3,7 @@ import { DownloadTask, Language, StorageConfig } from '../types';
 import { getTranslation } from '../utils/translations';
 import { triggerBrowserDownload } from '../services/downloadManager';
 import { storagePreferenceManager } from '../services/storagePreferenceManager';
+import { getUnrestrictedDownloadUrl } from '../utils/downloaderLinks';
 import { 
   Download, 
   CheckCircle2, 
@@ -191,11 +192,11 @@ export const ActiveDownloadBar: React.FC<Props> = ({
               <div className="flex items-center gap-1.5 flex-wrap">
                 {task.originalUrl && (
                   <a
-                    href={`https://www.ssyoutube.com/watch?v=${task.videoId.replace(/^yt-/, '')}`}
+                    href={getUnrestrictedDownloadUrl(task.videoId, task.originalUrl)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-950/40 transition"
-                    title="মোবাইলের নিজস্ব নেটওয়ার্ক থেকে সরাসরি আসল ফাইলটি ডাউনলোড করুন"
+                    title="কপিরাইট মুক্ত হাই-স্পিড ডাউনলোড ইঞ্জিন"
                   >
                     <ExternalLink className="w-3.5 h-3.5 text-white" />
                     <span>{language === 'bn' ? 'আসল গান ডাউনলোড' : 'Direct Download'}</span>

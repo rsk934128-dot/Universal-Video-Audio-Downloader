@@ -27,8 +27,12 @@ import {
   Database,
   Upload,
   FileSpreadsheet,
-  FileCode
+  FileCode,
+  ExternalLink,
+  Sparkles
 } from 'lucide-react';
+import { extractYouTubeId } from '../services/videoExtractor';
+import { getUnrestrictedDownloadUrl, getY2MateUrl } from '../utils/downloaderLinks';
 
 interface Props {
   history: DownloadTask[];
@@ -66,7 +70,25 @@ export const DownloadHistoryView: React.FC<Props> = ({
     });
   };
 
+  const resolveYouTubeId = (item: DownloadTask): string | null => {
+    if (item.videoId && !item.videoId.startsWith('http')) {
+      return item.videoId.replace(/^yt-/, '');
+    }
+    return extractYouTubeId(item.originalUrl || item.directUrl || '') || null;
+  };
+
   const handleSaveToSDCard = async (item: DownloadTask) => {
+    const ytId = resolveYouTubeId(item);
+    if (ytId) {
+      const directUrl = getUnrestrictedDownloadUrl(ytId, item.originalUrl);
+      if (typeof window !== 'undefined') {
+        window.open(directUrl, '_blank', 'noopener,noreferrer');
+      }
+      setSdFeedback({ id: item.id, msg: 'আসল ফাইল ডাউনলোডার ওপেন হয়েছে...' });
+      setTimeout(() => setSdFeedback(null), 4000);
+      return;
+    }
+
     const targetUrl = item.fileBlobUrl || (item.directUrl ? `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}&filename=${encodeURIComponent(item.fileName)}&stream=true` : null);
     if (!targetUrl) {
       onRetry(item);
@@ -85,11 +107,19 @@ export const DownloadHistoryView: React.FC<Props> = ({
   };
 
   const handleReDownload = async (item: DownloadTask) => {
+    const ytId = resolveYouTubeId(item);
+    if (ytId) {
+      const directUrl = getUnrestrictedDownloadUrl(ytId, item.originalUrl);
+      if (typeof window !== 'undefined') {
+        window.open(directUrl, '_blank', 'noopener,noreferrer');
+      }
+      return;
+    }
     if (item.fileBlobUrl) {
       triggerBrowserDownload(item.fileName, item.fileBlobUrl);
       return;
     }
-    if (item.directUrl) {
+    if (item.directUrl && !item.directUrl.includes('youtube.com')) {
       const proxyUrl = `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}&filename=${encodeURIComponent(item.fileName)}&stream=true`;
       triggerBrowserDownload(item.fileName, proxyUrl);
       return;
@@ -366,6 +396,19 @@ export const DownloadHistoryView: React.FC<Props> = ({
                         )}
                       </button>
 
+                      {resolveYouTubeId(item) && (
+                        <a
+                          href={getUnrestrictedDownloadUrl(resolveYouTubeId(item)!, item.originalUrl)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-950/40 transition"
+                          title="মোবাইলে সরাসরি আসল ভিডিও ফাইল ডাউনলোড করুন (কপিরাইট মুক্ত)"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>{language === 'bn' ? 'আসল ভিডিও' : 'Direct MP4'}</span>
+                        </a>
+                      )}
+
                       <button
                         id={`redownload-${item.id}`}
                         onClick={() => handleReDownload(item)}
@@ -424,31 +467,69 @@ export const DownloadHistoryView: React.FC<Props> = ({
               {/* Inline player if active */}
               {playingId === item.id && (
                 <div className="p-4 bg-slate-950/90 rounded-b-2xl border-x border-b border-slate-800 -mt-2 mb-3">
-                  {isAudio ? (
-                    <div className="flex items-center gap-4">
-                      <Disc3 className="w-8 h-8 text-rose-400 animate-spin shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-white line-clamp-1">{item.title}</p>
-                        <audio
-                          src={item.fileBlobUrl || (item.directUrl ? `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}` : undefined)}
-                          controls
-                          autoPlay
-                          className="w-full mt-2 h-9 accent-rose-500"
-                        />
+                  {(() => {
+                    const ytId = resolveYouTubeId(item);
+                    if (ytId) {
+                      return (
+                        <div className="flex flex-col items-center">
+                          <div className="w-full max-w-lg aspect-video rounded-xl overflow-hidden bg-black border border-slate-800 shadow-2xl relative">
+                            <iframe
+                              src={`https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&rel=0&modestbranding=1`}
+                              title={item.title}
+                              className="w-full h-full"
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                              allowFullScreen
+                            />
+                          </div>
+                          <div className="flex items-center justify-between w-full max-w-lg mt-3 text-xs text-slate-400 flex-wrap gap-2">
+                            <span className="flex items-center gap-1.5 text-emerald-400 font-medium">
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>ফুল হাই-কোয়ালিটি অনলাইন প্লেয়ার সক্রিয়</span>
+                            </span>
+                            <a
+                              href={getUnrestrictedDownloadUrl(ytId, item.originalUrl)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-md transition"
+                            >
+                              <span>আসল ভিডিও ফাইল ডাউনলোড</span>
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    if (isAudio) {
+                      return (
+                        <div className="flex items-center gap-4">
+                          <Disc3 className="w-8 h-8 text-rose-400 animate-spin shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-bold text-white line-clamp-1">{item.title}</p>
+                            <audio
+                              src={item.fileBlobUrl || (item.directUrl ? `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}` : undefined)}
+                              controls
+                              autoPlay
+                              className="w-full mt-2 h-9 accent-rose-500"
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="flex flex-col items-center">
+                        <div className="w-full max-w-md aspect-video rounded-xl overflow-hidden bg-black">
+                          <video
+                            src={item.fileBlobUrl || (item.directUrl ? `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}` : undefined)}
+                            controls
+                            autoPlay
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center">
-                      <div className="w-full max-w-md aspect-video rounded-xl overflow-hidden bg-black">
-                        <video
-                          src={item.fileBlobUrl || (item.directUrl ? `/api/proxy-download?url=${encodeURIComponent(item.directUrl)}` : undefined)}
-                          controls
-                          autoPlay
-                          className="w-full h-full object-contain"
-                        />
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               )}
             </div>
